@@ -1,0 +1,35 @@
+Raster2Seq pretrained model weights
+SPDX-License-Identifier: CC-BY-NC-4.0
+
+The Raster2Seq pretrained model weights distributed with or expressly referencing
+this notice are licensed under the Creative Commons Attribution-NonCommercial
+4.0 International Public License (CC BY-NC 4.0), to the extent the licensors hold
+the rights being licensed. The unmodified license terms are incorporated by
+reference and control over any summary in this notice:
+
+https://creativecommons.org/licenses/by-nc/4.0/legalcode.en
+
+Covered checkpoint keys and Hugging Face subfolders:
+  s3d-bw             s3d-bw/
+  s3d-density        s3d-density/
+  cubicasa5k         cubicasa5k/
+  raster2graph       raster2graph/
+  raster2graph-512   Raster2Graph-512/
+
+Material: Raster2Seq pretrained model weights
+Creators: Hao Phung and Hadar Averbuch-Elor
+Source: https://huggingface.co/haopt/Raster2Seq
+Paper: https://arxiv.org/abs/2602.09016
+
+When sharing the weights or adaptations, retain the supplied attribution and
+license notices, provide a link to the license, and indicate modifications,
+as required by CC BY-NC 4.0. The weights are provided as-is, without warranties,
+subject to the license's disclaimer and limitation of liability.
+
+Commercial use, including inference in a commercial SaaS product, is not
+authorized by this CC BY-NC 4.0 grant. For separate permission inquiries, contact
+htp26@cornell.edu. Separate permission is not guaranteed.
+
+This notice applies to the pretrained weights, not the Raster2Seq source code,
+which is licensed under MIT.
+Training datasets and third-party components remain subject to their own licenses.

@@ -60,6 +60,9 @@ Details of the model architecture and experimental results can be found in [our 
     <li>
       <a href="#acknowledgment">Acknowledgment</a>
     </li>
+    <li>
+      <a href="#license">License</a>
+    </li>
   </ol>
 </details>
 
@@ -125,6 +128,10 @@ In this code, we experiments with 3 datasets: Structured3D, CubiCasa5K, and Rast
 ### Checkpoints
 
 Our model checkpoints are hosted at [<img src="https://huggingface.co/front/assets/huggingface_logo.svg" width=20>haopt/Raster2Seq](https://huggingface.co/haopt/Raster2Seq), with one subfolder per trained model. You can download all checkpoints at once or only the checkpoint subfolder you need.
+
+Checkpoint releases distributed with the [checkpoint license notice](LICENSE-CHECKPOINTS)
+are offered under **CC BY-NC 4.0** for noncommercial use. See [License](#license)
+for scope, attribution, and commercial-use inquiries.
 
 <table>
   <thead>
@@ -288,6 +295,22 @@ image** at batch size 1 on a **single A6000 GPU** (see Supplementary's Table 14 
 
 We gratefully acknowledge the authors of [RoomFormer](https://github.com/ywyue/RoomFormer), [HEAT](https://github.com/woodfrog/heat), [Raster2Graph](https://github.com/SizheHu/Raster-to-Graph) and [MonteFloor](https://github.com/vevenom/MonteScene) for releasing their code and datasets.
 Our approach builds upon [Deformable-DETR](https://github.com/fundamentalvision/Deformable-DETR) for the architecture design and draws inspiration from [PolyFormer](https://github.com/amazon-science/polygon-transformer) for the seq2seq framework.
+
+## License
+
+Raster2Seq source code is licensed under the [MIT License](LICENSE).
+Third-party code and dependencies retain their respective licenses and notices.
+
+The pretrained model weights are licensed separately under
+[Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)](https://creativecommons.org/licenses/by-nc/4.0/)
+for releases distributed with or expressly referencing [LICENSE-CHECKPOINTS](LICENSE-CHECKPOINTS).
+This covers `s3d-bw`, `s3d-density`, `cubicasa5k`, `raster2graph`, and
+`raster2graph-512`. The license permits noncommercial use and adaptation, subject to its terms, including attribution when sharing the weights or adaptations.
+
+Commercial use of these weights, including inference in a commercial SaaS product,
+is not authorized by this CC BY-NC 4.0 grant. For separate permission inquiries,
+contact [htp26@cornell.edu](mailto:htp26@cornell.edu); permission is not guaranteed.
+Training datasets and third-party components remain subject to their own licenses.
 
 ## Contacts
 
