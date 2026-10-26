@@ -52,6 +52,9 @@ Details of the model architecture and experimental results can be found in [our 
       <a href="#evaluation">Evaluation</a>
     </li>
     <li>
+      <a href="#replicability-stamp">Replicability Stamp</a>
+    </li>
+    <li>
       <a href="#training">Training</a>
     </li>
     <li>
@@ -226,6 +229,18 @@ We perform cross-evaluation on three datasets, CubiCasa5K, Raster2Graph, and WAF
 | Raster2Graph | `tools/cross_eval_r2g.sh`    |
 | WAFFLE       | `tools/cross_eval_waffle.sh` |
 
+### Reproducing Table 1
+
+To reproduce Raster2Seq's results reported in **Table 1** across Structure3D
+(Structured3D), CubiCasa5K, and Raster2Graph, run the following command from the
+repository root:
+
+```shell
+bash tools/reproduce_table1.sh
+```
+
+Each evaluation prints its aggregate metrics and saves them in the corresponding `results.txt` file.
+
 ## Training
 
 ### Stage 1: Training with only structural room predictions
@@ -254,6 +269,20 @@ We perform cross-evaluation on three datasets, CubiCasa5K, Raster2Graph, and WAF
 | Raster2Graph | `tools/finetune_r2g_res512.sh` |
 
 </details>
+
+## GPU hardware and runtime
+
+All experiments use NVIDIA RTX A6000 48GB GPUs. Table below reports the following training configurations and elapsed times for the two training stages (see Supplementary's Table 7):
+
+| Dataset                 | Training GPUs | Stage 1    | Stage 2    |
+| ----------------------- | ------------- | ---------- | ---------- |
+| Structured3D-3DScans    | 1 A6000       | 5.0 hours  | 6.9 hours  |
+| CubiCasa5K              | 1 A6000       | 19.4 hours | 16.0 hours |
+| Raster2Graph            | 2 A6000s      | 21.1 hours | 13.6 hours |
+| Structured3D-DensityMap | 1 A6000       | 14.3 hours | 4.6 hours  |
+
+For inference, it takes **0.52 seconds per
+image** at batch size 1 on a **single A6000 GPU** (see Supplementary's Table 14 for more comparison).
 
 ## Acknowledgment
 
