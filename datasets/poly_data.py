@@ -17,7 +17,7 @@ from datasets.transforms import ResizeAndPad
 from detectron2.data import transforms as T
 from detectron2.data.detection_utils import annotations_to_instances, transform_instance_annotations
 from detectron2.structures import BoxMode
-from util.poly_ops import resort_corners
+from util.poly_ops import orient_line, resort_corners
 
 
 class TokenType(Enum):
@@ -219,6 +219,10 @@ class ConvertToCocoDict(object):
         record["annotations"] = target
 
         if self.augmentations is None:
+            # open lines (annotation "geom_type": "line") get a fixed direction; polygons are used as stored
+            for obj in target:
+                if obj.get("geom_type") == "line":
+                    obj["segmentation"] = [orient_line(obj["segmentation"][0])]
             record["image"] = (1 / 255) * torch.as_tensor(np.ascontiguousarray(self._expand_image_dims(img)))
             record["instances"] = annotations_to_instances(target, (h, w), mask_format=self.mask_format)
         else:
@@ -233,9 +237,14 @@ class ConvertToCocoDict(object):
                 for obj in record.pop("annotations")
                 if obj.get("iscrowd", 0) == 0
             ]
-            # resort corners after augmentation: so that all corners start from upper-left counterclockwise
+            # resort corners after augmentation: so that all corners start from upper-left counterclockwise.
+            # Open lines (annotation "geom_type": "line") keep their point order - resorting would splice
+            # their end onto their start - and only get a fixed direction.
             for anno in annos:
-                anno["segmentation"][0] = resort_corners(anno["segmentation"][0])
+                if anno.get("geom_type") == "line":
+                    anno["segmentation"][0] = orient_line(anno["segmentation"][0])
+                else:
+                    anno["segmentation"][0] = resort_corners(anno["segmentation"][0])
 
             record["instances"] = annotations_to_instances(annos, (h, w), mask_format=self.mask_format)
 
