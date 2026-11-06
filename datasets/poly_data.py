@@ -17,8 +17,7 @@ from datasets.transforms import ResizeAndPad
 from detectron2.data import transforms as T
 from detectron2.data.detection_utils import annotations_to_instances, transform_instance_annotations
 from detectron2.structures import BoxMode
-from util.poly_ops import resort_corners
-
+from util.poly_ops import orient_line, resort_corners
 
 class TokenType(Enum):
     """0 for <coord>, 1 for <sep>, 2 for <eos>, 3 for <cls>"""
@@ -34,6 +33,7 @@ WD_INDEX = {
     "cubicasa": [9, 10],
     "waffle": [],
     "r2g": [],
+    "osm": [],
 }
 
 
@@ -49,6 +49,7 @@ class MultiPoly(Dataset):
         poly2seq=False,
         converter_version="v1",
         random_drop_rate=0.0,
+        geom_classes=False,
         **kwargs,
     ):
         super(MultiPoly, self).__init__()
@@ -72,6 +73,7 @@ class MultiPoly(Dataset):
             random_drop_rate=random_drop_rate,
             **kwargs,
         )
+        self.geom_classes = geom_classes
 
     def get_image(self, path):
         return Image.open(os.path.join(self.root, path))
@@ -101,6 +103,11 @@ class MultiPoly(Dataset):
 
         ann_ids = coco.getAnnIds(imgIds=img_id)
         target = coco.loadAnns(ann_ids)
+
+        # if lines exist in data and prediction is not semantic
+        if self.geom_classes:   # class = geometry type: 0 polygon, 1 line
+            for t in target:
+                t["category_id"] = int(t.get("geom_type") == "line")
 
         ### Note: here is a hack which assumes door/window have category_id 16, 17 in structured3D
         if self.semantic_classes == -1:
@@ -219,8 +226,13 @@ class ConvertToCocoDict(object):
         record["annotations"] = target
 
         if self.augmentations is None:
+            # open lines (annotation "geom_type": "line") get a fixed direction; polygons are used as stored
+            for obj in target:
+                if obj.get("geom_type") == "line":
+                    obj["segmentation"] = [orient_line(obj["segmentation"][0])]
             record["image"] = (1 / 255) * torch.as_tensor(np.ascontiguousarray(self._expand_image_dims(img)))
             record["instances"] = annotations_to_instances(target, (h, w), mask_format=self.mask_format)
+            record["instances"].gt_is_line = torch.tensor([o.get("geom_type") == "line" for o in target], dtype=torch.bool)
         else:
             aug_input = T.AugInput(img)
             transforms = self.augmentations(aug_input)
@@ -233,11 +245,18 @@ class ConvertToCocoDict(object):
                 for obj in record.pop("annotations")
                 if obj.get("iscrowd", 0) == 0
             ]
-            # resort corners after augmentation: so that all corners start from upper-left counterclockwise
+            # resort corners after augmentation: so that all corners start from upper-left counterclockwise.
+            # Open lines (annotation "geom_type": "line") keep their point order - resorting would splice
+            # their end onto their start - and only get a fixed direction.
             for anno in annos:
-                anno["segmentation"][0] = resort_corners(anno["segmentation"][0])
+                if anno.get("geom_type") == "line":
+                    anno["segmentation"][0] = orient_line(anno["segmentation"][0])
+                else:
+                    anno["segmentation"][0] = resort_corners(anno["segmentation"][0])
 
             record["instances"] = annotations_to_instances(annos, (h, w), mask_format=self.mask_format)
+            # per-shape open/closed flag (from the annotations' geom_type), for drawing / scoring lines open
+            record["instances"].gt_is_line = torch.tensor([a.get("geom_type") == "line" for a in annos], dtype=torch.bool)
 
         #### NEW ####
         if self.image_normalize is not None:
@@ -369,6 +388,7 @@ class ConvertToCocoDictWithOrder_plus(ConvertToCocoDict):
         dataset_name="stru3d",
         order_type="l2r",
         random_drop_rate=0.0,
+        row_tolerance=None,
         **kwargs,
     ):
         super().__init__(
@@ -385,6 +405,11 @@ class ConvertToCocoDictWithOrder_plus(ConvertToCocoDict):
         self.dataset_name = dataset_name
         self.order_type = order_type  # l2r, r2l
         self.random_drop_rate = random_drop_rate
+        # Shape order: sort_polygons groups shapes into rows whose top corners are within `tolerance`, then goes
+        # left to right. The default tolerance (20) is applied to 0-1 coordinates, which puts every shape in
+        # one row (pure left-to-right order). row_tolerance sets the row height as a fraction of the image
+        # (e.g. 0.08), giving reading order (rows top to bottom) at any image size; None keeps the original.
+        self.row_tolerance = row_tolerance
         self.tokenizer = DiscreteTokenizer(add_cls=add_cls_token, **kwargs)
 
     def _get_bilinear_interpolation_coeffs(self, polygons, polygons_label, add_cls_token=False, per_token_class=False):
@@ -398,11 +423,12 @@ class ConvertToCocoDictWithOrder_plus(ConvertToCocoDict):
             poly_idx for poly_idx, poly_label in enumerate(polygons_label) if poly_label in WD_INDEX[self.dataset_name]
         ]
 
+        tol = {} if self.row_tolerance is None else {"tolerance": self.row_tolerance}   # polygons are in 0-1 units
         _, room_sorted_indices = sort_polygons(
-            [polygons[poly_idx] for poly_idx in room_indices], reverse=(self.order_type == "r2l")
+            [polygons[poly_idx] for poly_idx in room_indices], reverse=(self.order_type == "r2l"), **tol
         )
         _, wd_sorted_indices = sort_polygons(
-            [polygons[poly_idx] for poly_idx in wd_indices], reverse=(self.order_type == "r2l")
+            [polygons[poly_idx] for poly_idx in wd_indices], reverse=(self.order_type == "r2l"), **tol
         )
         room_indices = [room_indices[_idx] for _idx in room_sorted_indices]
         wd_indices = [wd_indices[_idx] for _idx in wd_sorted_indices]
@@ -516,7 +542,8 @@ class ConvertToCocoDictWithOrder_plus(ConvertToCocoDict):
 def make_poly_transforms(dataset_name, image_set, image_size=256, disable_image_transform=False):
 
     trans_list = []
-    if dataset_name in ["cubicasa", "waffle"] or (dataset_name == "r2g" and image_size != 512):
+    # set up padding for specific datasets
+    if dataset_name in ["cubicasa", "waffle", "osm"] or (dataset_name == "r2g" and image_size != 512):
         trans_list = [ResizeAndPad((image_size, image_size), pad_value=255)]
 
     if image_set == "train":
@@ -585,6 +612,8 @@ def build(image_set, args):
             mask_format=getattr(args, "mask_format", "polygon"),
             converter_version=getattr(args, "converter_version", "v1"),
             random_drop_rate=getattr(args, "random_drop_rate", 0.0),
+            row_tolerance=getattr(args, "row_tolerance", None),
+            geom_classes=getattr(args, "geom_classes", False),
         )
 
     return dataset

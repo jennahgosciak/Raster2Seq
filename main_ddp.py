@@ -58,6 +58,11 @@ def get_args_parser():
     parser.add_argument(
         "--random_drop_rate", type=float, default=0.0, help="randomly drop some polygons during training"
     )
+    parser.add_argument(
+        "--row_tolerance", type=float, default=None,
+        help="shape order: group shapes into rows of this height, as a fraction of the image (e.g. 0.08) - "
+             "reading order; default: left to right only",
+    )
 
     # raster2seq
     parser.add_argument("--poly2seq", action="store_true")
@@ -72,6 +77,9 @@ def get_args_parser():
     parser.add_argument("--jointly_train", action="store_true")
 
     # parser.add_argument('--use_room_attn_at_last_dec_layer', default=False, action='store_true', help="use room-wise attention in last decoder layer")
+
+    # handle stage 1 predictions differently
+    parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
 
     # backbone
     parser.add_argument("--backbone", default="resnet50", type=str, help="Name of the convolutional backbone to use")
@@ -462,6 +470,11 @@ def main(args):
                         checkpoint[key] = checkpoint[key].repeat((diff_scale, 1))
                     else:
                         checkpoint[key] = checkpoint[key].repeat((diff_scale,))
+            # New: if sequence of checkpoint != initialized sequence
+            elif key == "query_embed.weight" and value.shape != model.module.query_embed.weight.shape:
+                n = min(len(value), len(model.module.query_embed.weight))
+                checkpoint[key] = model.module.query_embed.weight.detach().cpu().clone()
+                checkpoint[key][:n] = value[:n]
 
         missing_keys, unexpected_keys = model.module.load_state_dict(checkpoint, strict=False)
         unexpected_keys = [k for k in unexpected_keys if not (k.endswith("total_params") or k.endswith("total_ops"))]
