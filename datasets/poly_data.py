@@ -19,7 +19,6 @@ from detectron2.data.detection_utils import annotations_to_instances, transform_
 from detectron2.structures import BoxMode
 from util.poly_ops import orient_line, resort_corners
 
-
 class TokenType(Enum):
     """0 for <coord>, 1 for <sep>, 2 for <eos>, 3 for <cls>"""
 
@@ -34,6 +33,7 @@ WD_INDEX = {
     "cubicasa": [9, 10],
     "waffle": [],
     "r2g": [],
+    "osm": [],
 }
 
 
@@ -535,7 +535,8 @@ class ConvertToCocoDictWithOrder_plus(ConvertToCocoDict):
 def make_poly_transforms(dataset_name, image_set, image_size=256, disable_image_transform=False):
 
     trans_list = []
-    if dataset_name in ["cubicasa", "waffle"] or (dataset_name == "r2g" and image_size != 512):
+    # set up padding for specific datasets
+    if dataset_name in ["cubicasa", "waffle", "osm"] or (dataset_name == "r2g" and image_size != 512):
         trans_list = [ResizeAndPad((image_size, image_size), pad_value=255)]
 
     if image_set == "train":

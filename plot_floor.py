@@ -15,6 +15,7 @@ from datasets.data_utils import sort_polygons
 from util.plot_utils import (
     CC5K_LABEL,
     S3D_LABEL,
+    OSM_LABEL,
     auto_crop_whitespace,
     plot_room_map,
     plot_semantic_rich_floorplan_opencv,
@@ -49,6 +50,9 @@ def plot_gt_floor(
         semantics_label_mapping = CC5K_LABEL
     elif args.dataset_name == "waffle":
         door_window_index = [1, 2]
+    elif args.dataset_name == "osm":
+        door_window_index = []
+        semantics_label_mapping = OSM_LABEL
     else:
         door_window_index = []
 

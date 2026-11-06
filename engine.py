@@ -154,7 +154,7 @@ def evaluate(
     Args:
         model: The neural network model to evaluate.
         criterion: The loss criterion used for evaluation.
-        dataset_name (str): Name of the dataset (e.g., "stru3d", "cubicasa", "r2g", "waffle").
+        dataset_name (str): Name of the dataset (e.g., "stru3d", "cubicasa", "r2g", "waffle", "osm).
         data_loader: DataLoader providing batches of input data.
         device: The device (e.g., CPU or GPU) to run the evaluation on.
         plot_density (bool, optional): If True, plots a density map for the last sample. Defaults to False.
@@ -250,7 +250,7 @@ def evaluate(
                 curr_opts.scene_id = "scene_0" + str(scene_ids[i])
                 curr_data_rw = S3DRW(curr_opts, mode="online_eval")
                 evaluator = Evaluator(curr_data_rw, curr_opts, disable_overlapping_filter=poly2seq)
-            elif dataset_name in ["cubicasa", "r2g", "waffle"]:
+            elif dataset_name in ["cubicasa", "r2g", "waffle", "osm"]:
                 evaluator = Evaluator_RPlan(disable_overlapping_filter=poly2seq, wd_as_line=wd_as_line)
 
             print("Running Evaluation for scene %s" % scene_ids[i])
@@ -294,7 +294,7 @@ def evaluate(
                         window_door_lines=window_doors,
                         window_door_lines_types=window_doors_types,
                     )
-            elif dataset_name in ["cubicasa", "r2g", "waffle"]:
+            elif dataset_name in ["cubicasa", "r2g", "waffle", "osm"]:
                 if not semantic_rich:
                     quant_result_dict_scene = evaluator.evaluate_scene(
                         room_polys=room_polys,
@@ -566,7 +566,7 @@ def evaluate_floor(
 
     Args:
         model: The trained model to evaluate (e.g., a PyTorch model).
-        dataset_name (str): Name of the dataset (e.g., "stru3d", "cubicasa", "r2g", "waffle").
+        dataset_name (str): Name of the dataset (e.g., "stru3d", "cubicasa", "r2g", "waffle", "osm").
         data_loader: PyTorch DataLoader providing batched inputs and extras.
         device: Device to run the model on (e.g., torch.device('cuda') or 'cpu').
         output_dir (str): Directory path to save output files (plots, JSONs, results).
@@ -660,7 +660,7 @@ def evaluate_floor(
                 curr_opts.scene_id = "scene_0" + str(scene_ids[i])
                 curr_data_rw = S3DRW(curr_opts, mode="test")
                 evaluator = Evaluator(curr_data_rw, curr_opts, disable_overlapping_filter=poly2seq)
-            elif dataset_name in ["cubicasa", "waffle", "r2g"]:
+            elif dataset_name in ["cubicasa", "waffle", "r2g", "osm"]:
                 evaluator = Evaluator_RPlan(
                     disable_overlapping_filter=poly2seq, iou_thres=iou_thres, wd_as_line=wd_as_line
                 )
@@ -698,7 +698,7 @@ def evaluate_floor(
                         window_door_lines=window_doors,
                         window_door_lines_types=window_doors_types,
                     )
-            elif dataset_name in ["cubicasa", "waffle", "r2g"]:
+            elif dataset_name in ["cubicasa", "waffle", "r2g", "osm"]:
                 if not semantic_rich:
                     quant_result_dict_scene = evaluator.evaluate_scene(
                         room_polys=room_polys,

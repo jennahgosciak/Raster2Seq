@@ -316,6 +316,9 @@ def main(args):
         semantics_label_mapping = CC5K_LABEL
     elif args.dataset_name == "waffle":
         door_window_index = [1, 2]
+    elif args.dataset_name == "osm":
+        door_window_index = []
+        semantics_label_mapping = OSM_LABEL
     else:
         door_window_index = []
 
