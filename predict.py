@@ -210,6 +210,8 @@ def get_args_parser():
     parser.add_argument("--plot_gt", default=False, type=bool, help="plot ground truth floorplan")
     parser.add_argument("--save_pred", action="store_true", help="save_pred")
 
+    # add for stage 1 if osm
+    parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
     return parser
 
 

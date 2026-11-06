@@ -489,6 +489,8 @@ def get_args_parser():
     parser.add_argument("--plot_gt", default=False, action="store_true", help="plot ground truth floorplan")
     parser.add_argument("--plot_gt_image", default=False, action="store_true", help="plot ground truth image")
 
+    # add for stage 1 if osm
+    parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
     return parser
 
 

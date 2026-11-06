@@ -78,6 +78,9 @@ def get_args_parser():
 
     # parser.add_argument('--use_room_attn_at_last_dec_layer', default=False, action='store_true', help="use room-wise attention in last decoder layer")
 
+    # handle stage 1 predictions differently
+    parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
+
     # backbone
     parser.add_argument("--backbone", default="resnet50", type=str, help="Name of the convolutional backbone to use")
     parser.add_argument(

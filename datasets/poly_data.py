@@ -49,6 +49,7 @@ class MultiPoly(Dataset):
         poly2seq=False,
         converter_version="v1",
         random_drop_rate=0.0,
+        geom_classes=False,
         **kwargs,
     ):
         super(MultiPoly, self).__init__()
@@ -72,6 +73,7 @@ class MultiPoly(Dataset):
             random_drop_rate=random_drop_rate,
             **kwargs,
         )
+        self.geom_classes = geom_classes
 
     def get_image(self, path):
         return Image.open(os.path.join(self.root, path))
@@ -101,6 +103,11 @@ class MultiPoly(Dataset):
 
         ann_ids = coco.getAnnIds(imgIds=img_id)
         target = coco.loadAnns(ann_ids)
+
+        # if lines exist in data and prediction is not semantic
+        if self.geom_classes:   # class = geometry type: 0 polygon, 1 line
+            for t in target:
+                t["category_id"] = int(t.get("geom_type") == "line")
 
         ### Note: here is a hack which assumes door/window have category_id 16, 17 in structured3D
         if self.semantic_classes == -1:
@@ -606,6 +613,7 @@ def build(image_set, args):
             converter_version=getattr(args, "converter_version", "v1"),
             random_drop_rate=getattr(args, "random_drop_rate", 0.0),
             row_tolerance=getattr(args, "row_tolerance", None),
+            geom_classes=getattr(args, "geom_classes", False),
         )
 
     return dataset
