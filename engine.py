@@ -187,6 +187,9 @@ def evaluate(
     else:
         door_window_index = []
 
+    if dataset_name == "osm":
+        wd_as_line = False
+
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = "Test:"
     model_obj = model if not hasattr(model, "module") else model.module
@@ -294,6 +297,18 @@ def evaluate(
             window_doors_types = scene_outputs["window_doors_types"]
             pred_room_label_per_scene = scene_outputs["pred_room_label_per_scene"]
 
+            if dataset_name == "osm" and semantic_rich:
+                # splits into polygon vs. liene evaluations
+                metric_logger.update(**line_scores(
+                    [p for p, t in zip(room_polys, room_types) if t in line_classes],
+                    [p for p, t in zip(gt_polys, gt_polys_types) if t in line_classes]))
+                keep = [t not in line_classes for t in room_types]
+                room_polys = [p for p, k in zip(room_polys, keep) if k]
+                room_types = [t for t, k in zip(room_types, keep) if k]
+                gt_keep = [t not in line_classes for t in gt_polys_types]
+                gt_polys = [p for p, k in zip(gt_polys, gt_keep) if k]
+                gt_polys_types = [t for t, k in zip(gt_polys_types, gt_keep) if k]
+
             if dataset_name == "stru3d":
                 if not semantic_rich:
                     quant_result_dict_scene = evaluator.evaluate_scene(room_polys=room_polys)
@@ -325,17 +340,6 @@ def evaluate(
                         gt_window_doors_type_list=gt_window_doors_types,
                         img_size=(image_size, image_size),
                     )
-            elif dataset_name == "osm" and semantic_rich:
-                # splits into polygon vs. liene evaluations
-                metric_logger.update(**line_scores(
-                    [p for p, t in zip(room_polys, room_types) if t in line_classes],
-                    [p for p, t in zip(gt_polys, gt_polys_types) if t in line_classes]))
-                keep = [t not in line_classes for t in room_types]
-                room_polys = [p for p, k in zip(room_polys, keep) if k]
-                room_types = [t for t, k in zip(room_types, keep) if k]
-                gt_keep = [t not in line_classes for t in gt_polys_types]
-                gt_polys = [p for p, k in zip(gt_polys, gt_keep) if k]
-                gt_polys_types = [t for t, k in zip(gt_polys_types, gt_keep) if k]
 
             if "room_iou" in quant_result_dict_scene:
                 metric_logger.update(room_iou=quant_result_dict_scene["room_iou"])
@@ -620,6 +624,10 @@ def evaluate_floor(
     else:
         door_window_index = []
 
+    if dataset_name == "osm":
+        wd_as_line = False
+        
+
     metric_category = ["room", "corner", "angles"]
     if semantic_rich:
         metric_category += ["room_sem", "window_door"]
@@ -630,6 +638,12 @@ def evaluate_floor(
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
+
+    # handles lines differently based on stage 1 vs. stage 2
+    ds = data_loader.dataset
+    line_classes = {1} if getattr(ds, "geom_classes", False) else {
+        a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("geom_type") == "line"}
+    line_results = []
 
     for batched_inputs, batched_extras in data_loader:
         samples = [x["image"].to(device) for x in batched_inputs]
@@ -708,6 +722,18 @@ def evaluate_floor(
             window_doors = scene_outputs["window_doors"]
             window_doors_types = scene_outputs["window_doors_types"]
             pred_room_label_per_scene = scene_outputs["pred_room_label_per_scene"]
+
+            if dataset_name == "osm" and semantic_rich:
+                scores = line_scores([p for p, t in zip(room_polys, room_types) if t in line_classes],
+                                     [p for p, t in zip(gt_polys, gt_polys_types) if t in line_classes])
+                if scores:
+                    line_results.append(scores)
+                keep = [t not in line_classes for t in room_types]
+                room_polys = [p for p, k in zip(room_polys, keep) if k]
+                room_types = [t for t, k in zip(room_types, keep) if k]
+                gt_keep = [t not in line_classes for t in gt_polys_types]
+                gt_polys = [p for p, k in zip(gt_polys, gt_keep) if k]
+                gt_polys_types = [t for t, k in zip(gt_polys_types, gt_keep) if k]
 
             if dataset_name == "stru3d":
                 if not semantic_rich:
@@ -863,6 +889,9 @@ def evaluate_floor(
     for k in quant_result_dict.keys():
         quant_result_dict[k] /= float(scene_counter)
     quant_result_dict = compute_f1(quant_result_dict, metric_category)
+
+    if line_results:
+        quant_result_dict.update({k: float(np.mean([r[k] for r in line_results])) for k in line_results[0]})
 
     print("*************************************************")
     print(quant_result_dict)

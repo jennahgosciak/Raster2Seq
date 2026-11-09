@@ -476,6 +476,14 @@ def main(args):
                 checkpoint[key] = model.module.query_embed.weight.detach().cpu().clone()
                 checkpoint[key][:n] = value[:n]
 
+        # skip last head if shape differs
+        # models own weights
+        model_sd = model.module.state_dict()
+        # skip if names match, but shapes don't match
+        skipped = [k for k, v in checkpoint.items() if k in model_sd and v.shape != model_sd[k].shape]
+        print("Not loaded (shape differs):", skipped)
+        checkpoint = {k: v for k, v in checkpoint.items() if k not in skipped}
+
         missing_keys, unexpected_keys = model.module.load_state_dict(checkpoint, strict=False)
         unexpected_keys = [k for k in unexpected_keys if not (k.endswith("total_params") or k.endswith("total_ops"))]
         if len(missing_keys) > 0:
@@ -569,7 +577,7 @@ def main(args):
                 poly2seq=args.poly2seq,
                 add_cls_token=args.add_cls_token,
                 per_token_sem_loss=args.per_token_sem_loss,
-                wd_as_line=not args.disable_wd_as_line,
+                wd_as_line=not args.disable_wd_as_line and args.dataset_name != "osm"
             )
             log_stats.update(**{f"test_{k}": v for k, v in test_stats.items()})
 
