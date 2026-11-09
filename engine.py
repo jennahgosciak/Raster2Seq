@@ -32,6 +32,9 @@ from util.plot_utils import (
 )
 from util.poly_ops import pad_gt_polys
 
+# add specific helper for lines
+from evaluations.line_eval import line_scores
+
 options = MCSSOptions()
 opts = options.parse()
 
@@ -188,6 +191,13 @@ def evaluate(
     header = "Test:"
     model_obj = model if not hasattr(model, "module") else model.module
 
+    ds = data_loader.dataset
+    # determine lines differently based on stage 1 or 2 output:
+    # - Stage 1 with --geom_classes: the model predicts 0 = polygon, 1 = line, so "line" is class 1.
+    # Stage 2: the model predicts 33 labels. Lines are several of those (street, path, highway)
+    line_classes = {1} if getattr(ds, "geom_classes", False) else {
+        a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("geom_type") == "line"}
+
     for batched_inputs, batched_extras in metric_logger.log_every(data_loader, 10, header):
         samples = [x["image"].to(device) for x in batched_inputs]
         scene_ids = [x["image_id"] for x in batched_inputs]
@@ -315,6 +325,17 @@ def evaluate(
                         gt_window_doors_type_list=gt_window_doors_types,
                         img_size=(image_size, image_size),
                     )
+            elif dataset_name == "osm" and semantic_rich:
+                # splits into polygon vs. liene evaluations
+                metric_logger.update(**line_scores(
+                    [p for p, t in zip(room_polys, room_types) if t in line_classes],
+                    [p for p, t in zip(gt_polys, gt_polys_types) if t in line_classes]))
+                keep = [t not in line_classes for t in room_types]
+                room_polys = [p for p, k in zip(room_polys, keep) if k]
+                room_types = [t for t, k in zip(room_types, keep) if k]
+                gt_keep = [t not in line_classes for t in gt_polys_types]
+                gt_polys = [p for p, k in zip(gt_polys, gt_keep) if k]
+                gt_polys_types = [t for t, k in zip(gt_polys_types, gt_keep) if k]
 
             if "room_iou" in quant_result_dict_scene:
                 metric_logger.update(room_iou=quant_result_dict_scene["room_iou"])
