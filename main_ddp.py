@@ -571,7 +571,7 @@ def main(args):
                 args.dataset_name,
                 data_loader_val,
                 device,
-                plot_density=True,
+                plot_density=False, # turning off
                 output_dir=output_dir,
                 epoch=epoch,
                 poly2seq=args.poly2seq,

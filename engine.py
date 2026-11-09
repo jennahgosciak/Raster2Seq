@@ -33,7 +33,7 @@ from util.plot_utils import (
 from util.poly_ops import pad_gt_polys
 
 # add specific helper for lines
-from evaluations.line_eval import line_scores
+from evaluations.line_eval import line_scores, line_scores_per_label
 
 options = MCSSOptions()
 opts = options.parse()
@@ -299,9 +299,8 @@ def evaluate(
 
             if dataset_name == "osm" and semantic_rich:
                 # splits into polygon vs. liene evaluations
-                metric_logger.update(**line_scores(
-                    [p for p, t in zip(room_polys, room_types) if t in line_classes],
-                    [p for p, t in zip(gt_polys, gt_polys_types) if t in line_classes]))
+                scores = line_scores_per_label(room_polys, room_types, gt_polys, gt_polys_types, line_classes)
+                metric_logger.update(**scores)
                 keep = [t not in line_classes for t in room_types]
                 room_polys = [p for p, k in zip(room_polys, keep) if k]
                 room_types = [t for t, k in zip(room_types, keep) if k]
@@ -723,11 +722,15 @@ def evaluate_floor(
             window_doors_types = scene_outputs["window_doors_types"]
             pred_room_label_per_scene = scene_outputs["pred_room_label_per_scene"]
 
+            pred_lines = gt_lines = [] # initialize to empty for other datasets
             if dataset_name == "osm" and semantic_rich:
-                scores = line_scores([p for p, t in zip(room_polys, room_types) if t in line_classes],
-                                     [p for p, t in zip(gt_polys, gt_polys_types) if t in line_classes])
+                scores = line_scores_per_label(room_polys, room_types, gt_polys, gt_polys_types, line_classes)
                 if scores:
                     line_results.append(scores)
+                # keep line predictions and gt
+                pred_lines = [(p, t) for p, t in zip(room_polys, room_types) if t in line_classes]
+                gt_lines = [(p, t) for p, t in zip(gt_polys, gt_polys_types) if t in line_classes]
+
                 keep = [t not in line_classes for t in room_types]
                 room_polys = [p for p, k in zip(room_polys, keep) if k]
                 room_types = [t for t, k in zip(room_types, keep) if k]
@@ -807,12 +810,22 @@ def evaluate_floor(
             }
 
             if plot_pred:
+                # account for lines separately
+                pl = [np.array(p) for p, _ in pred_lines]
+                gl = [np.array(p) for p, _ in gt_lines]
                 gt_floorplan_map = plot_floorplan_with_regions(
-                    gt_room_polys, matching_labels=gt_mask, base_scale=image_size, scale=1024
-                )
+                    gt_room_polys + gl, matching_labels=None if gt_mask is None else gt_mask + [True] * len(gl),
+                    base_scale=image_size, scale=1024, is_line=[False] * len(gt_room_polys) + [True] * len(gl))
                 floorplan_map = plot_floorplan_with_regions(
-                    room_polys, matching_labels=pred_mask, base_scale=image_size, scale=1024
-                )
+                    room_polys + pl, matching_labels=None if pred_mask is None else pred_mask + [True] * len(pl),
+                    base_scale=image_size, scale=1024, is_line=[False] * len(room_polys) + [True] * len(pl))
+
+                # gt_floorplan_map = plot_floorplan_with_regions(
+                #     gt_room_polys, matching_labels=gt_mask, base_scale=image_size, scale=1024
+                # )
+                # floorplan_map = plot_floorplan_with_regions(
+                #     room_polys, matching_labels=pred_mask, base_scale=image_size, scale=1024
+                # )
                 if not merge:
                     cv2.imwrite(os.path.join(output_dir, "{}_pred_floorplan.png".format(scene_ids[i])), floorplan_map)
                     cv2.imwrite(os.path.join(output_dir, "{}_gt_floorplan.png".format(scene_ids[i])), gt_floorplan_map)
@@ -824,6 +837,9 @@ def evaluate_floor(
 
                 if semantic_rich:
                     _, ID2CLASS_LABEL = get_dataset_class_labels(dataset_name)
+                    # add lines to the shapes to be predicted
+                    shapes = [[p, t, False] for p, t in zip(room_polys + window_doors, room_types + window_doors_types)]
+                    shapes += [[p, t, True] for p, t in pred_lines]
                     floorplan_map = plot_semantic_rich_floorplan_opencv(
                         zip(room_polys + window_doors, room_types + window_doors_types),
                         os.path.join(output_dir, "{}_pred_floorplan_sem.png".format(scene_ids[i])),
@@ -872,10 +888,17 @@ def evaluate_floor(
                 cv2.imwrite(os.path.join(output_dir, "{}_gt.png".format(scene_ids[i])), gt_image)
 
             if plot_density:
-                pred_room_map = plot_density_map(
-                    samples[i], image_size, room_polys, pred_room_label_per_scene, plot_text=False
-                )
-                gt_room_map = plot_density_map(samples[i], image_size, gt_polys, gt_polys_types, plot_text=False)
+                pred_room_map = plot_density_map(samples[i], image_size, room_polys + pl,
+                                                 list(pred_room_label_per_scene) + [t for _, t in pred_lines],
+                                                 plot_text=False, is_line=[False] * len(room_polys) + [True] * len(pl))
+                gt_room_map = plot_density_map(samples[i], image_size, gt_polys + gl,
+                                               list(gt_polys_types) + [t for _, t in gt_lines],
+                                               plot_text=False, is_line=[False] * len(gt_polys) + [True] * len(gl))
+                                               
+                # pred_room_map = plot_density_map(
+                #     samples[i], image_size, room_polys, pred_room_label_per_scene, plot_text=False
+                # )
+                # gt_room_map = plot_density_map(samples[i], image_size, gt_polys, gt_polys_types, plot_text=False)
 
                 if merge:
                     concatenated_map = concat_floorplan_maps(gt_room_map, pred_room_map, plot_statistics)
@@ -890,8 +913,12 @@ def evaluate_floor(
         quant_result_dict[k] /= float(scene_counter)
     quant_result_dict = compute_f1(quant_result_dict, metric_category)
 
+    # add line results, only for labels that appear in images
     if line_results:
-        quant_result_dict.update({k: float(np.mean([r[k] for r in line_results])) for k in line_results[0]})
+        # get all per-label metrics for the set of images in the sample
+        keys = {k for r in line_results for k in r}
+        # compute mean for each label across all images that have it
+        quant_result_dict.update({k: float(np.mean([r[k] for r in line_results if k in r])) for k in keys})
 
     print("*************************************************")
     print(quant_result_dict)

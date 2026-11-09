@@ -1,3 +1,5 @@
+import numpy as np
+
 from shapely.geometry import LineString
 from shapely.ops import unary_union
 
@@ -16,3 +18,16 @@ def line_scores(pred_lines, gt_lines, tol=corner_metric_thresh):
     rec = gt.intersection(pred.buffer(tol)).length / gt.length
     f1 = 2 * prec * rec / (prec + rec) if prec + rec else 0.0
     return {"line_prec": prec, "line_rec": rec, "line_f1": f1}
+
+def line_scores_per_label(pred_polys, pred_types, gt_polys, gt_types, line_classes, tol=corner_metric_thresh):
+    """line_scores for each line class with ground-truth lines in the image (keys end in _<class id>),
+    plus their mean under the plain keys. Returns {} if the image has no ground-truth lines."""
+    out, per = {}, []
+    for c in sorted(set(gt_types) & set(line_classes)):
+        s = line_scores([p for p, t in zip(pred_polys, pred_types) if t == c],
+                        [p for p, t in zip(gt_polys, gt_types) if t == c], tol)
+        out.update({f"{k}_{c}": v for k, v in s.items()})
+        per.append(s)
+    if per:
+        out.update({k: float(np.mean([s[k] for s in per])) for k in per[0]})
+    return out
