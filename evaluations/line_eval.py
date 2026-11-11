@@ -1,7 +1,7 @@
 import numpy as np
 from shapely.geometry import LineString
 
-from evaluations.rplan_eval.Evaluator import Evaluator_RPlan
+from evaluations.rplan_eval.Evaluator import Evaluator_RPlan, corner_metric_thresh
 
 
 def buffer_lines(polys, types, line_classes, radius=2.0):
@@ -17,9 +17,10 @@ def buffer_lines(polys, types, line_classes, radius=2.0):
     return out
 
 
-def line_scores(pred_polys, pred_types, gt_polys, gt_types, line_classes, img_size, radius=2.0):
-    """Line precision / recall: the lines are buffered into thin polygons and matched like polygons
-    (Evaluator_RPlan, IoU > 0.5); line_sem_* also need the right label. Returns {} without true lines."""
+def line_scores(pred_polys, pred_types, gt_polys, gt_types, line_classes, img_size, radius=corner_metric_thresh):
+    """Line precision / recall: the lines are buffered `radius` px on each side (default: the 10 px corner
+    tolerance) and matched like polygons (Evaluator_RPlan, IoU > 0.5); line_sem_* also need the right label.
+    Returns {} without true lines."""
     pred = [(p, t) for p, t in zip(pred_polys, pred_types) if t in line_classes]
     gt = [(p, t) for p, t in zip(gt_polys, gt_types) if t in line_classes]
     if not gt:
