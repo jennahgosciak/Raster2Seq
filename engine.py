@@ -33,7 +33,7 @@ from util.plot_utils import (
 from util.poly_ops import pad_gt_polys
 
 # add specific helper for lines
-from evaluations.line_eval import line_scores, line_scores_per_label
+from evaluations.line_eval import line_scores
 
 options = MCSSOptions()
 opts = options.parse()
@@ -298,9 +298,9 @@ def evaluate(
             pred_room_label_per_scene = scene_outputs["pred_room_label_per_scene"]
 
             if dataset_name == "osm" and semantic_rich:
-                # splits into polygon vs. liene evaluations
-                scores = line_scores_per_label(room_polys, room_types, gt_polys, gt_polys_types, line_classes)
-                metric_logger.update(**scores)
+                # lines: buffered into thin polygons and scored on their own; the evaluator below gets polygons only
+                metric_logger.update(**line_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
+                                                   (image_size, image_size)))
                 keep = [t not in line_classes for t in room_types]
                 room_polys = [p for p, k in zip(room_polys, keep) if k]
                 room_types = [t for t, k in zip(room_types, keep) if k]
@@ -724,10 +724,12 @@ def evaluate_floor(
 
             pred_lines = gt_lines = [] # initialize to empty for other datasets
             if dataset_name == "osm" and semantic_rich:
-                scores = line_scores_per_label(room_polys, room_types, gt_polys, gt_polys_types, line_classes)
+                # lines: buffered into thin polygons and scored on their own; the evaluator below gets polygons only
+                scores = line_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
+                                     (image_size, image_size))
                 if scores:
                     line_results.append(scores)
-                # keep line predictions and gt
+                # keep line predictions and gt (for plots)
                 pred_lines = [(p, t) for p, t in zip(room_polys, room_types) if t in line_classes]
                 gt_lines = [(p, t) for p, t in zip(gt_polys, gt_polys_types) if t in line_classes]
 
