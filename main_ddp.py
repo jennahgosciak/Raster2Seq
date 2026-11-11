@@ -438,7 +438,7 @@ def main(args):
         # )
         dist.barrier()
 
-    if args.start_from_checkpoint:
+    if args.start_from_checkpoint and not (args.resume and os.path.exists(args.resume)):
         checkpoint = torch.load(args.start_from_checkpoint, map_location="cpu")["model"]
         for key, value in checkpoint.items():
             if key.startswith("class_embed"):
@@ -498,7 +498,10 @@ def main(args):
             checkpoint["geom_embed.weight"] = checkpoint["room_class_embed.weight"][:2]   # 0 polygon, 1 line
             checkpoint["geom_embed.bias"] = checkpoint["room_class_embed.bias"][:2]
         # skip weights whose shape differs from the model's (e.g. a label head with another number of classes)
+        # skip last head if shape differs
+        # models own weights
         model_sd = model.module.state_dict()
+        # skip if names match, but shapes don't match
         skipped = [k for k, v in checkpoint.items() if k in model_sd and v.shape != model_sd[k].shape]
         print("Not loaded (shape differs):", skipped)
         checkpoint = {k: v for k, v in checkpoint.items() if k not in skipped}
@@ -590,13 +593,13 @@ def main(args):
                 args.dataset_name,
                 data_loader_val,
                 device,
-                plot_density=True,
+                plot_density=False, # turning off
                 output_dir=output_dir,
                 epoch=epoch,
                 poly2seq=args.poly2seq,
                 add_cls_token=args.add_cls_token,
                 per_token_sem_loss=args.per_token_sem_loss,
-                wd_as_line=not args.disable_wd_as_line,
+                wd_as_line=not args.disable_wd_as_line and args.dataset_name != "osm"
             )
             log_stats.update(**{f"test_{k}": v for k, v in test_stats.items()})
 

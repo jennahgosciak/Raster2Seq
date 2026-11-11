@@ -145,6 +145,10 @@ def get_args_parser():
     parser.add_argument("--dataset_root", default="data/stru3d", type=str)
     parser.add_argument("--eval_set", default="test", type=str)
 
+    # new for osm
+    parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
+    parser.add_argument("--row_tolerance", type=float, default=None)
+
     parser.add_argument("--device", default="cuda", help="device to use for training / testing")
     parser.add_argument("--num_workers", default=2, type=int)
     parser.add_argument("--seed", default=42, type=int)
