@@ -422,7 +422,7 @@ def main(args):
         # )
         dist.barrier()
 
-    if args.start_from_checkpoint:
+    if args.start_from_checkpoint and not (args.resume and os.path.exists(args.resume)):
         checkpoint = torch.load(args.start_from_checkpoint, map_location="cpu")["model"]
         for key, value in checkpoint.items():
             if key.startswith("class_embed"):
