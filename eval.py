@@ -170,6 +170,10 @@ def get_args_parser():
     parser.add_argument("--geom_mask", action="store_true",
                         help="with --add_geom_head: during generation, labels must match the predicted geometry type")
 
+
+    # argument for per-label evaluation
+    parser.add_argument("--per_label_eval", action="store_true", help="also report precision / recall per label")
+
     return parser
 
 
@@ -312,6 +316,7 @@ def main(args):
         per_token_sem_loss=args.per_token_sem_loss,
         iou_thres=args.iou_thres,
         poly2seq=args.poly2seq,
+        per_label=args.per_label_eval
     )
 
 

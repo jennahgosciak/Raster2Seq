@@ -32,8 +32,8 @@ from util.plot_utils import (
 )
 from util.poly_ops import pad_gt_polys
 
-# add specific helper for lines
-from evaluations.line_eval import line_scores
+# add specific helper for lines and per-label scoring
+from evaluations.line_eval import line_scores, label_scores
 
 options = MCSSOptions()
 opts = options.parse()
@@ -574,6 +574,7 @@ def evaluate_floor(
     per_token_sem_loss=False,
     iou_thres=0.5,
     wd_as_line=True,
+    per_label=False, # new to handle per-label metrics
 ):
     """
     Evaluate the model on a given dataset at testing.
@@ -643,6 +644,7 @@ def evaluate_floor(
     line_classes = {1} if getattr(ds, "geom_classes", False) else {
         a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("geom_type") == "line"}
     line_results = []
+    label_results = [] # --per_label_eval, initialize, will be used later
 
     for batched_inputs, batched_extras in data_loader:
         samples = [x["image"].to(device) for x in batched_inputs]
@@ -728,7 +730,14 @@ def evaluate_floor(
                 scores = line_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
                                      (image_size, image_size))
                 if scores:
+                    # adding line scores
                     line_results.append(scores)
+
+                # adding per-label scores
+                if per_label:  # per-label precision / recall, before lines are removed below
+                    label_results.append(label_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
+                                                      (image_size, image_size)))
+
                 # keep line predictions and gt (for plots)
                 pred_lines = [(p, t) for p, t in zip(room_polys, room_types) if t in line_classes]
                 gt_lines = [(p, t) for p, t in zip(gt_polys, gt_polys_types) if t in line_classes]
@@ -921,6 +930,18 @@ def evaluate_floor(
         keys = {k for r in line_results for k in r}
         # compute mean for each label across all images that have it
         quant_result_dict.update({k: float(np.mean([r[k] for r in line_results if k in r])) for k in keys})
+
+    # add per-label results
+    # each label averaged over the images that contain it
+    if label_results:
+        names, _ = get_dataset_class_labels(dataset_name)
+        keys = sorted({k for r in label_results for k in r}, key=lambda k: (int(k.split("_")[1]), k))
+        quant_result_dict["per_label"] = {
+            f"{k.split('_')[0]}_{names[int(k.split('_')[1])]}": float(np.mean([r[k] for r in label_results if k in r]))
+            for k in keys}
+        for k, v in quant_result_dict["per_label"].items():
+            print(f"{k:<25s} {v:.3f}")
+
 
     print("*************************************************")
     print(quant_result_dict)
