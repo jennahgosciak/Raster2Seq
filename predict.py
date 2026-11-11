@@ -213,6 +213,17 @@ def get_args_parser():
 
     # add for stage 1 if osm
     parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
+
+    # accepted so predict.py takes the same options as main_ddp.py / eval.py (they only affect ground-truth loading)
+    parser.add_argument("--converter_version", type=str, default="v1")
+    parser.add_argument("--row_tolerance", type=float, default=None)
+
+    # add for geom head
+    parser.add_argument("--add_geom_head", action="store_true",
+                        help="geometry head (polygon/line) whose prediction adds a learned bias to the label logits")
+    parser.add_argument("--geom_loss_coef", default=1.0, type=float)
+    parser.add_argument("--geom_mask", action="store_true",
+                        help="with --add_geom_head: during generation, labels must match the predicted geometry type")
     return parser
 
 

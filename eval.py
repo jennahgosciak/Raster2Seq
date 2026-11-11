@@ -163,6 +163,17 @@ def get_args_parser():
     parser.add_argument("--plot_gt", default=True, type=bool, help="plot ground truth floorplan")
     parser.add_argument("--save_pred", action="store_true", help="save_pred")
 
+    # add geom head
+    parser.add_argument("--add_geom_head", action="store_true",
+                        help="geometry head (polygon/line) whose prediction adds a learned bias to the label logits")
+    parser.add_argument("--geom_loss_coef", default=1.0, type=float)
+    parser.add_argument("--geom_mask", action="store_true",
+                        help="with --add_geom_head: during generation, labels must match the predicted geometry type")
+
+
+    # argument for per-label evaluation
+    parser.add_argument("--per_label_eval", action="store_true", help="also report precision / recall per label")
+
     return parser
 
 
@@ -305,6 +316,7 @@ def main(args):
         per_token_sem_loss=args.per_token_sem_loss,
         iou_thres=args.iou_thres,
         poly2seq=args.poly2seq,
+        per_label=args.per_label_eval
     )
 
 
