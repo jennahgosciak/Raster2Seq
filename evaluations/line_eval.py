@@ -13,6 +13,9 @@ def buffer_lines(polys, types, line_classes, radius=2.0):
         # otherwise don't buffer and just append
         if t in line_classes and len(p) >= 2:
             g = LineString(p).buffer(radius, cap_style=2, join_style=2)
+            if g.geom_type == "MultiPolygon":  
+                # a line folding back on itself can split into pieces: keep the largest
+                g = max(g.geoms, key=lambda x: x.area)
             if not g.is_empty:
                 p = np.round(np.asarray(g.exterior.coords[:-1])).astype(np.int32)
         out.append(p)
