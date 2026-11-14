@@ -942,7 +942,6 @@ def evaluate_floor(
         for k, v in quant_result_dict["per_label"].items():
             print(f"{k:<25s} {v:.3f}")
 
-
     print("*************************************************")
     print(quant_result_dict)
     print("*************************************************")

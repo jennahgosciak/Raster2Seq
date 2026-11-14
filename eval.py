@@ -167,6 +167,7 @@ def get_args_parser():
     parser.add_argument("--add_geom_head", action="store_true",
                         help="geometry head (polygon/line) whose prediction adds a learned bias to the label logits")
     parser.add_argument("--geom_loss_coef", default=1.0, type=float)
+    parser.add_argument("--per_label_eval", action="store_true", help="also report precision / recall per label")
     parser.add_argument("--geom_mask", action="store_true",
                         help="with --add_geom_head: during generation, labels must match the predicted geometry type")
 
