@@ -163,11 +163,6 @@ def get_args_parser():
     parser.add_argument("--plot_gt", default=True, type=bool, help="plot ground truth floorplan")
     parser.add_argument("--save_pred", action="store_true", help="save_pred")
 
-    # same ground-truth settings as training: stage-1 geometry classes, shape order
-    parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
-    parser.add_argument("--row_tolerance", type=float, default=None,
-                        help="shape order: rows of this height, as a fraction of the image (e.g. 0.08); default: left to right")
-
     # add geom head
     parser.add_argument("--add_geom_head", action="store_true",
                         help="geometry head (polygon/line) whose prediction adds a learned bias to the label logits")
@@ -175,6 +170,10 @@ def get_args_parser():
     parser.add_argument("--per_label_eval", action="store_true", help="also report precision / recall per label")
     parser.add_argument("--geom_mask", action="store_true",
                         help="with --add_geom_head: during generation, labels must match the predicted geometry type")
+
+
+    # argument for per-label evaluation
+    parser.add_argument("--per_label_eval", action="store_true", help="also report precision / recall per label")
 
     return parser
 
@@ -318,7 +317,7 @@ def main(args):
         per_token_sem_loss=args.per_token_sem_loss,
         iou_thres=args.iou_thres,
         poly2seq=args.poly2seq,
-        per_label=args.per_label_eval,
+        per_label=args.per_label_eval
     )
 
 
