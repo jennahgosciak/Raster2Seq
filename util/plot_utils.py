@@ -164,6 +164,7 @@ def plot_floorplan_with_regions(
     regions_type=None,
     plot_text=False,
     semantics_label_mapping=None,
+    is_line=None,
 ):
     """Draw floorplan map where different colors indicate different rooms"""
     # cmap = get_cmap('tab20', 20) # nipy_spectral
@@ -207,20 +208,22 @@ def plot_floorplan_with_regions(
     #     ind = np.argsort(np.square(np.array(avg_corner)).sum(axis=1), axis=0)
     #     regions = [regions[_idx] for _idx in ind] # np.array(regions)[ind]
 
-    for idx, polygon in enumerate(regions):
-        cv2.fillPoly(room_map, [polygon], color=idx + 1)
+    # account for line
+    is_line = is_line or [False] * len(regions)
+    for idx, (polygon, line) in enumerate(zip(regions, is_line)):
+        if not line:
+            cv2.fillPoly(room_map, [polygon], color=idx + 1)
+    # for idx, polygon in enumerate(regions):
+    #     cv2.fillPoly(room_map, [polygon], color=idx + 1)
 
     image = colorMap[room_map.reshape(-1)].reshape((scale, scale, 4))
 
     pointColor = (0, 0, 0, 255)
     lineColor = (0, 0, 0, 255)
 
-    for region in regions:
-        for i, point in enumerate(region):
-            if i == len(region) - 1:
-                cv2.line(image, tuple(point), tuple(region[0]), color=lineColor, thickness=5)
-            else:
-                cv2.line(image, tuple(point), tuple(region[i + 1]), color=lineColor, thickness=5)
+    # draw lines
+    for region, line in zip(regions, is_line):
+        cv2.polylines(image, [region], isClosed=not line, color=lineColor, thickness=5)
 
     for region in regions:
         for i, point in enumerate(region):
@@ -406,7 +409,7 @@ def plot_room_map(preds, room_map, room_id=0, im_size=256, plot_text=True, close
     return room_map
 
 
-def plot_density_map(sample, image_size, room_polys, pred_room_label_per_scene, plot_text=True):
+def plot_density_map(sample, image_size, room_polys, pred_room_label_per_scene, plot_text=True, is_line=None):
     if not isinstance(sample, np.ndarray):
         density_map = np.transpose(sample.cpu().numpy(), [1, 2, 0])
     else:
@@ -417,8 +420,10 @@ def plot_density_map(sample, image_size, room_polys, pred_room_label_per_scene, 
         density_map = np.repeat(density_map, 3, axis=2) * (image_size - 1)
     pred_room_map = np.zeros([image_size, image_size, 3])
 
-    for room_poly, room_id in zip(room_polys, pred_room_label_per_scene):
-        pred_room_map = plot_room_map(room_poly, pred_room_map, room_id, im_size=image_size, plot_text=plot_text)
+    # updated to account for lines
+    for room_poly, room_id, line in zip(room_polys, pred_room_label_per_scene, is_line or [False] * len(room_polys)):
+        pred_room_map = plot_room_map(room_poly, pred_room_map, room_id, im_size=image_size, plot_text=plot_text,
+                                      closed=not line)
 
     alpha = 0.4  # Adjust for desired transparency
     pred_room_map = cv2.addWeighted(density_map.astype(np.uint8), alpha, pred_room_map.astype(np.uint8), 1 - alpha, 0)

@@ -19,6 +19,7 @@ from models import build_model
 from raster2seq_hub import resolve_checkpoint_path
 from util.plot_utils import CC5K_LABEL, S3D_LABEL, auto_crop_whitespace, plot_semantic_rich_floorplan_opencv
 
+from datasets import get_dataset_class_labels
 
 class ImageDataset(Dataset):
     def __init__(self, image_paths, num_image_channels=3, transform=None):
@@ -212,6 +213,17 @@ def get_args_parser():
 
     # add for stage 1 if osm
     parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
+
+    # accepted so predict.py takes the same options as main_ddp.py / eval.py (they only affect ground-truth loading)
+    parser.add_argument("--converter_version", type=str, default="v1")
+    parser.add_argument("--row_tolerance", type=float, default=None)
+
+    # add for geom head
+    parser.add_argument("--add_geom_head", action="store_true",
+                        help="geometry head (polygon/line) whose prediction adds a learned bias to the label logits")
+    parser.add_argument("--geom_loss_coef", default=1.0, type=float)
+    parser.add_argument("--geom_mask", action="store_true",
+                        help="with --add_geom_head: during generation, labels must match the predicted geometry type")
     return parser
 
 
@@ -320,7 +332,7 @@ def main(args):
         door_window_index = [1, 2]
     elif args.dataset_name == "osm":
         door_window_index = []
-        semantics_label_mapping = OSM_LABEL
+        semantics_label_mapping = {0: "polygon", 1: "line"} if args.geom_classes else get_dataset_class_labels("osm")
     else:
         door_window_index = []
 

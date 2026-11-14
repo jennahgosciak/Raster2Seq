@@ -1,9 +1,12 @@
 import sys
+import os
 from .poly_data import build as build_poly
-sys.path.insert(0, "~/Vectorizing-Raster-Maps/data_preprocess")
+# OSM vocabulary: Vectorizing-Raster-Maps/data_preprocess/create_coco_osm.py, next to this repo
+OSM_PREPROCESS = os.path.join(os.path.dirname(__file__), "..", "..", "Vectorizing-Raster-Maps", "data_preprocess")
 
 # add osm vocabulary
-from data_preprocess.create_coco_osm import CATEGORIES
+sys.path.insert(0, OSM_PREPROCESS)
+from create_coco_osm import CATEGORIES
 
 
 def build_dataset(image_set, args):

@@ -268,21 +268,24 @@ class ConvertToCocoDict(object):
             if not hasattr(record["instances"], "gt_masks"):
                 polygons = [np.array([[0.0, 0.0]])]
                 polygons_label = [self.semantic_classes - 1]  # dummy class
+                polygons_geom = [0]
             else:
                 polygons = [
                     np.clip(np.array(inst).reshape(-1, 2) / (w - 1), 0, 1)
                     for inst in record["instances"].gt_masks.polygons
                 ]
                 polygons_label = [inst.item() for inst in record["instances"].gt_classes]
+                polygons_geom = record["instances"].gt_is_line.long().tolist()  # 1 = line, 0 = polygon
             record.update(
                 self._get_bilinear_interpolation_coeffs(
-                    polygons, polygons_label, self.add_cls_token, self.per_token_class
+                    polygons, polygons_label, self.add_cls_token, self.per_token_class, polygons_geom
                 )
             )
 
         return record
 
-    def _get_bilinear_interpolation_coeffs(self, polygons, polygons_label, add_cls_token=False, per_token_class=False):
+    def _get_bilinear_interpolation_coeffs(self, polygons, polygons_label, add_cls_token=False, per_token_class=False,
+                                           polygons_geom=None):
         num_bins = self.tokenizer.num_bins
         quant_poly = [poly * (num_bins - 1) for poly in polygons]
         index11 = [[math.floor(p[0]) * num_bins + math.floor(p[1]) for p in poly] for poly in quant_poly]
@@ -412,7 +415,8 @@ class ConvertToCocoDictWithOrder_plus(ConvertToCocoDict):
         self.row_tolerance = row_tolerance
         self.tokenizer = DiscreteTokenizer(add_cls=add_cls_token, **kwargs)
 
-    def _get_bilinear_interpolation_coeffs(self, polygons, polygons_label, add_cls_token=False, per_token_class=False):
+    def _get_bilinear_interpolation_coeffs(self, polygons, polygons_label, add_cls_token=False, per_token_class=False,
+                                           polygons_geom=None):
         num_bins = self.tokenizer.num_bins
         room_indices = [
             poly_idx
@@ -443,6 +447,7 @@ class ConvertToCocoDictWithOrder_plus(ConvertToCocoDict):
 
         polygons = [polygons[i] for i in combined_indices]
         polygons_label = [polygons_label[i] for i in combined_indices]
+        polygons_geom = [polygons_geom[i] for i in combined_indices]
 
         quant_poly = [poly * (num_bins - 1) for poly in polygons]
         index11 = [[math.floor(p[0]) * num_bins + math.floor(p[1]) for p in poly] for poly in quant_poly]
@@ -503,15 +508,20 @@ class ConvertToCocoDictWithOrder_plus(ConvertToCocoDict):
         delta_y1 = self.tokenizer._padding(delta_y1, 0, dtype=torch.float32)
         delta_y2 = 1 - delta_y1
 
+        # per-token geometry type, built with the per-token labels: 1 = line, 0 = polygon, -1 = <sep> / <eos> / padding
+        target_geom = None
         if not per_token_class:
             target_polygon_labels = [polygons_label[i] for i in poly_indices]  # polygons_label[:count_polys]
             input_polygon_labels = torch.tensor(target_polygon_labels.copy(), dtype=torch.long)
         else:
-            target_polygon_labels = []
+            target_polygon_labels, target_geom = [], []
             for i in poly_indices:
                 poly, poly_label = quant_poly[i], polygons_label[i]
                 target_polygon_labels.extend([poly_label] * len(poly))
                 target_polygon_labels.append(self.semantic_classes - 1)  # undefined class for <sep> and <eos> token
+                target_geom.extend([polygons_geom[i]] * len(poly))
+                target_geom.append(-1)  # no geometry for <sep> / <eos>
+            target_geom = torch.tensor(target_geom + [-1] * (self.tokenizer.seq_len - len(target_geom)), dtype=torch.long)
             input_polygon_labels = torch.tensor(
                 [self.semantic_classes - 1] + target_polygon_labels.copy()[:-1], dtype=torch.long
             )  # right shift by one: <bos>, ..., <coord>
@@ -522,7 +532,7 @@ class ConvertToCocoDictWithOrder_plus(ConvertToCocoDict):
 
         target_polygon_labels = torch.tensor(target_polygon_labels, dtype=torch.long)
 
-        return {
+        out = {
             "delta_x1": delta_x1,
             "delta_x2": delta_x2,
             "delta_y1": delta_y1,
@@ -537,6 +547,9 @@ class ConvertToCocoDictWithOrder_plus(ConvertToCocoDict):
             "target_polygon_labels": target_polygon_labels,
             "input_polygon_labels": input_polygon_labels,
         }
+        if target_geom is not None:
+            out["target_geom"] = target_geom
+        return out
 
 
 def make_poly_transforms(dataset_name, image_set, image_size=256, disable_image_transform=False):
