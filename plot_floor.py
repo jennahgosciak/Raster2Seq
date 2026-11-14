@@ -10,12 +10,11 @@ import plotly.graph_objects as go
 import torch
 from torch.utils.data import DataLoader
 
-from datasets import build_dataset
+from datasets import build_dataset, get_dataset_class_labels
 from datasets.data_utils import sort_polygons
 from util.plot_utils import (
     CC5K_LABEL,
     S3D_LABEL,
-    OSM_LABEL,
     auto_crop_whitespace,
     plot_room_map,
     plot_semantic_rich_floorplan_opencv,
@@ -52,7 +51,7 @@ def plot_gt_floor(
         door_window_index = [1, 2]
     elif args.dataset_name == "osm":
         door_window_index = []
-        semantics_label_mapping = OSM_LABEL
+        semantics_label_mapping = {0: "polygon", 1: "line"} if args.geom_classes else get_dataset_class_labels("osm")[0]
     else:
         door_window_index = []
 

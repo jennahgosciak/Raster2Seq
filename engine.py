@@ -194,12 +194,14 @@ def evaluate(
     header = "Test:"
     model_obj = model if not hasattr(model, "module") else model.module
 
-    ds = data_loader.dataset
     # determine lines differently based on stage 1 or 2 output:
     # - Stage 1 with --geom_classes: the model predicts 0 = polygon, 1 = line, so "line" is class 1.
     # Stage 2: the model predicts 33 labels. Lines are several of those (street, path, highway)
-    line_classes = {1} if getattr(ds, "geom_classes", False) else {
-        a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("geom_type") == "line"}
+    line_classes = set()
+    if dataset_name == "osm":
+        ds = data_loader.dataset
+        line_classes = {1} if getattr(ds, "geom_classes", False) else {
+            a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("geom_type") == "line"}
 
     for batched_inputs, batched_extras in metric_logger.log_every(data_loader, 10, header):
         samples = [x["image"].to(device) for x in batched_inputs]

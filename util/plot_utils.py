@@ -16,10 +16,6 @@ from PIL import ImageColor
 from plotly.colors import qualitative
 from shapely.geometry import LineString, Polygon
 
-sys.path.insert(0, "~/Vectorizing-Raster-Maps/data_preprocess")
-# add osm vocabulary
-from data_preprocess.create_coco_osm import CATEGORIES
-
 colors_12 = [
     "#e6194b",
     "#3cb44b",
@@ -111,8 +107,6 @@ R2G_LABEL = {
     10: "PS",
     11: "outside",
 }
-
-OSM_LABEL = {i: label for label, i in CATEGORIES.items()}
 
 BLUE = "#6699cc"
 GRAY = "#999999"
