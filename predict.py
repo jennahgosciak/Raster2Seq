@@ -224,8 +224,10 @@ def get_args_parser():
     parser.add_argument("--geom_loss_coef", default=1.0, type=float)
     parser.add_argument("--sem_attn", action="store_true",
                         help="bidirectional attention layer over the sequence before the semantic head")
-    parser.add_argument("--start_order_coef", type=float, default=0.0,
-                        help="weight of the penalty for shape starts going backwards in reading order (needs --row_tolerance)")
+    parser.add_argument("--start_repeat_coef", type=float, default=0.0,
+                        help="weight of the penalty for a shape starting where an earlier shape started")
+    parser.add_argument("--start_repeat_radius", type=float, default=0.02,
+                        help="distance (fraction of the image) counted as the same start for --start_repeat_coef")
     parser.add_argument("--start_noise_prob", type=float, default=0.0,
                         help="training: share of shapes whose input start corner is jittered")
     parser.add_argument("--start_noise_std", type=float, default=0.01,

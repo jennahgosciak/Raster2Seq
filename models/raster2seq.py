@@ -684,7 +684,7 @@ class SetCriterion(nn.Module):
         losses,
         label_smoothing=0.0,
         per_token_sem_loss=False,
-        start_order_tol=None,
+        start_repeat_radius=None,
     ):
         """Create the criterion.
         Parameters:
@@ -702,7 +702,7 @@ class SetCriterion(nn.Module):
         self.losses = losses
         self.label_smoothing = label_smoothing
         self.per_token_sem_loss = per_token_sem_loss
-        self.start_order_tol = start_order_tol  # row height for --start_order_coef (= --row_tolerance)
+        self.start_repeat_radius = start_repeat_radius  # --start_repeat_radius (fraction of the image)
 
         if "loss_raster" in self.weight_dict:
             self.raster_loss = MaskRasterizationLoss(None)
@@ -815,9 +815,9 @@ class SetCriterion(nn.Module):
         losses = {}
         losses["loss_coords"] = loss_coords
 
-        # --start_order_coef: penalise a shape's predicted first corner landing earlier in reading order
-        if self.start_order_tol is not None and self.weight_dict.get("loss_start_order", 0) > 0:
-            losses["loss_start_order"] = self._start_order_loss(src_poly, target_polys, token_labels)
+        # --start_repeat_coef: penalise a shape's predicted first corner landing on an earlier shape's start
+        if self.start_repeat_radius and self.weight_dict.get("loss_start_repeat", 0) > 0:
+            losses["loss_start_repeat"] = self._start_repeat_loss(src_poly, target_polys, token_labels)
 
         # omit the rasterization loss for semantically-rich floorplan
         if self.weight_dict.get("loss_raster", 0) > 0:
@@ -832,16 +832,11 @@ class SetCriterion(nn.Module):
 
         return losses
 
-    def _start_order_loss(self, pred, target, token_labels):
-        """Mean penalty for each shape's predicted first corner lying earlier in reading order than the previous
-        shape's true first corner (more than a row, start_order_tol, above it, or to its left within that row),
-        beyond what the true first corner itself does (shapes are sorted by their top point, so some true
-        starts already step back); a correct prediction costs nothing."""
-
-        def backwards(p, q):  # how far p goes back from q in reading order
-            return F.relu(q[:, 1] - self.start_order_tol - p[:, 1]) + \
-                F.relu(q[:, 0] - p[:, 0]) * ((p[:, 1] - q[:, 1]).abs() <= self.start_order_tol)
-
+    def _start_repeat_loss(self, pred, target, token_labels):
+        """Mean penalty for each shape's predicted first corner lying within start_repeat_radius of an earlier
+        shape's first corner (i.e. starting where the model already started), beyond how close the true first
+        corner is: shapes that truly start close together cost nothing."""
+        r = self.start_repeat_radius
         corner = token_labels == 0
         starts = corner & ~torch.cat([torch.zeros_like(corner[:, :1]), corner[:, :-1]], dim=1)
         terms = []
@@ -849,8 +844,11 @@ class SetCriterion(nn.Module):
             idx = starts[b].nonzero().squeeze(1)
             if len(idx) < 2:
                 continue
-            q = target[b, idx[:-1]]  # previous shape's true start
-            terms.append(F.relu(backwards(pred[b, idx[1:]], q) - backwards(target[b, idx[1:]], q)))
+            earlier = target[b, idx]  # true first corners of all shapes
+            closeness_pred = F.relu(r - torch.cdist(pred[b, idx[1:]], earlier))  # shape k+1 vs every start
+            closeness_true = F.relu(r - torch.cdist(target[b, idx[1:]], earlier))
+            before = torch.tril(torch.ones_like(closeness_pred, dtype=torch.bool))  # only shapes 0..k
+            terms.append(((closeness_pred - closeness_true).clamp(min=0) * before).amax(dim=1))
         return torch.cat(terms).mean() if terms else pred.sum() * 0
 
     def _get_src_permutation_idx(self, indices):
@@ -970,7 +968,7 @@ def build(args, train=True, tokenizer=None):
         "loss_coords": args.coords_loss_coef,
         # new loss for geom classification only
         "loss_ce_geom": getattr(args, "geom_loss_coef", 1.0),
-        "loss_start_order": getattr(args, "start_order_coef", 0.0),
+        "loss_start_repeat": getattr(args, "start_repeat_coef", 0.0),
     }
     if args.raster_loss_coef > 0:
         weight_dict["loss_raster"] = args.raster_loss_coef
@@ -997,7 +995,7 @@ def build(args, train=True, tokenizer=None):
         losses,
         label_smoothing=args.label_smoothing,
         per_token_sem_loss=args.per_token_sem_loss,
-        start_order_tol=getattr(args, "row_tolerance", None),
+        start_repeat_radius=getattr(args, "start_repeat_radius", None),
     )
     criterion.to(device)
 
