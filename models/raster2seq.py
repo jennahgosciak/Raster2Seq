@@ -274,13 +274,17 @@ class Raster2Seq(nn.Module):
         outputs_class = inter_classes
         outputs_coord = inter_references
 
+        # token head + coordinate head
         out = {"pred_logits": outputs_class[-1], "pred_coords": outputs_coord[-1]}
 
         if self.room_class_embed is not None:
             ## NEW
+            # these are the true geometries
             target_geom = None if seq_kwargs is None else seq_kwargs.get("target_geom")
+            # augment the room logits with geom type if available
             out["pred_room_logits"], geom_logits = self._room_logits(hs[-1], target_geom)
             if geom_logits is not None:
+                # add geom-specific logits too (if available/not None)
                 out["pred_geom_logits"] = geom_logits
 
         if self.aux_loss:
@@ -289,6 +293,7 @@ class Raster2Seq(nn.Module):
         return out
 
     def _prepare_sequences(self, b):
+        """Initialize sequences for inference: add BOS to beginning of sequences and set up positions"""
         prev_output_token_11 = [[self.tokenizer.bos] for _ in range(b)]
         prev_output_token_12 = [[self.tokenizer.bos] for _ in range(b)]
         prev_output_token_21 = [[self.tokenizer.bos] for _ in range(b)]
@@ -300,6 +305,7 @@ class Raster2Seq(nn.Module):
 
         gen_out = [[] for _ in range(b)]
 
+        #  not used
         if self.inject_cls_embed:
             input_polygon_labels = [[self.semantic_classes - 1] for _ in range(b)]
         else:
@@ -598,8 +604,10 @@ class Raster2Seq(nn.Module):
 
         # hack implementation of room label prediction, not compatible with auxiliary loss
         if self.room_class_embed is not None:
+            # hidden state for batch x token x hidden dimension
             hs = torch.cat(output_hs_list, dim=1)
             ## NEW
+            # get room logits but also geom logits if available
             outputs_room_class, geom_logits = self._room_logits(hs)
             out = {
                 "pred_logits": all_cls_logits,
@@ -705,15 +713,19 @@ class SetCriterion(nn.Module):
         assert "pred_logits" in outputs
         src_logits = outputs["pred_logits"]
 
+        # 1: token type loss
         target_classes = targets["token_labels"].to(src_logits.device)
+        # only count token types that are corners in the loss
         mask = (target_classes != -1).bool()
         loss_ce = label_smoothed_nll_loss(
             src_logits[mask], target_classes[mask], epsilon=self.label_smoothing, reduction="mean"
         )
         losses = {"loss_ce": loss_ce}
 
+        # 2: semantic class loss
         if "pred_room_logits" in outputs:
             room_src_logits = outputs["pred_room_logits"]
+            # not used in practice
             if not self.per_token_sem_loss:
                 mask = target_classes == 3  # cls token
                 room_target_classes = targets["target_polygon_labels"].to(room_src_logits.device)
@@ -724,7 +736,9 @@ class SetCriterion(nn.Module):
                     reduction="mean",
                 )
             else:
+                # get target classes
                 room_target_classes = targets["target_polygon_labels"].to(room_src_logits.device)
+                # compute CE loss
                 loss_ce_room = label_smoothed_nll_loss(
                     room_src_logits[room_target_classes != -1],
                     room_target_classes[room_target_classes != -1],
@@ -735,10 +749,12 @@ class SetCriterion(nn.Module):
             losses = {"loss_ce": loss_ce, "loss_ce_room": loss_ce_room}
 
         ## NEW
+        # new geometric only loss for geometric predictions
         if "pred_geom_logits" in outputs and "target_geom" in targets:
             geom_target = targets["target_geom"].to(src_logits.device)
+            # only lines = 1, polygons = 0
             keep = geom_target >= 0
-            losses["loss_ce_geom"] = F.cross_entropy(outputs["pred_geom_logits"][keep], geom_target[keep])
+            losses["loss_ce_geom"] = label_smoothed_nll_loss(outputs["pred_geom_logits"][keep], geom_target[keep], epsilon=self.label_smoothing, reduction="mean")
 
         return losses
 
