@@ -211,6 +211,7 @@ def get_args_parser():
     parser.add_argument("--plot_gt", default=False, type=bool, help="plot ground truth floorplan")
     parser.add_argument("--save_pred", action="store_true", help="save_pred")
 
+    ## NEW
     # add for stage 1 if osm
     parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
 
@@ -330,6 +331,7 @@ def main(args):
         semantics_label_mapping = CC5K_LABEL
     elif args.dataset_name == "waffle":
         door_window_index = [1, 2]
+    ## NEW
     elif args.dataset_name == "osm":
         door_window_index = []
         semantics_label_mapping = {0: "polygon", 1: "line"} if args.geom_classes else get_dataset_class_labels("osm")

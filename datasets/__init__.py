@@ -4,6 +4,7 @@ from .poly_data import build as build_poly
 
 
 def build_dataset(image_set, args):
+    ## NEW
     if args.dataset_name in ["stru3d", "cubicasa", "waffle", "r2g", "osm"]:
         print(f"Build {args.dataset_name} {image_set} dataset")
         return build_poly(image_set, args)
@@ -63,6 +64,7 @@ def get_dataset_class_labels(dataset_name):
             "PS": 10,
             "outside": 11,
         }
+    ## NEW
     elif dataset_name == "osm":
         # OSM vocabulary: Vectorizing-Raster-Maps/data_preprocess/create_coco_osm.py, next to this repo
         OSM_PREPROCESS = os.path.join(os.path.dirname(__file__), "..", "..", "Vectorizing-Raster-Maps", "data_preprocess")

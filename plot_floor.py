@@ -49,6 +49,7 @@ def plot_gt_floor(
         semantics_label_mapping = CC5K_LABEL
     elif args.dataset_name == "waffle":
         door_window_index = [1, 2]
+    ## NEW
     elif args.dataset_name == "osm":
         door_window_index = []
         semantics_label_mapping = {0: "polygon", 1: "line"} if args.geom_classes else get_dataset_class_labels("osm")[0]
@@ -64,6 +65,7 @@ def plot_gt_floor(
         if plot_gt:
             for i, gt_inst in enumerate(gt_instances):
                 image = np.transpose((samples[i] * 255).cpu().numpy(), [1, 2, 0])
+                ## NEW
                 # per-shape open/closed flag (datasets with a geom_type field); False = closed polygon
                 is_line = gt_inst.gt_is_line.tolist() if gt_inst.has("gt_is_line") else [False] * len(gt_inst)
                 if not semantic_rich:
@@ -72,6 +74,7 @@ def plot_gt_floor(
                     density_map = np.repeat(density_map, 3, axis=2)
 
                     gt_sem_rich = []
+                    ## NEW
                     for poly, poly_type, line in zip(gt_inst.gt_masks.polygons, gt_inst.gt_classes.cpu().numpy(), is_line):
                         corners = np.array(poly[0].reshape(-1, 2))
                         if len(corners) < (2 if line else 3):
@@ -125,9 +128,11 @@ def plot_gt_floor(
 
                     gt_polygons, sorted_indices = sort_polygons(gt_polygons)
                     gt_polygons_labels = [gt_polygons_labels[_idx] for _idx in sorted_indices]
+                    ## NEW
                     gt_is_line = [is_line[_idx] for _idx in sorted_indices]
 
                     gt_sem_rich = []
+                    ## NEW
                     for j, (poly, poly_label, line) in enumerate(zip(gt_polygons, gt_polygons_labels, gt_is_line)):
                         # if gt_inst.gt_classes.cpu().numpy()[j] not in [1, 9, 11]:
                         #     continue
@@ -135,6 +140,7 @@ def plot_gt_floor(
                         # corners_flip_y = corners.copy()
                         # corners_flip_y[:,1] = 255 - corners_flip_y[:,1]
                         # corners = corners_flip_y
+                        ## NEW
                         gt_sem_rich.append([corners, poly_label, line])
 
                     if args.plot_engine == "opencv":
@@ -189,12 +195,14 @@ def plot_polys(data_loader, device, output_dir):
                 density_map = np.repeat(density_map, 3, axis=2) * 255
             pred_room_map = np.zeros(density_map.shape).astype(np.uint8)
 
+            ## NEW
             inst = gt_instances[i]
             room_polys = inst.gt_masks.polygons
             room_ids = inst.gt_classes.detach().cpu().numpy()
             is_line = inst.gt_is_line.tolist() if inst.has("gt_is_line") else [False] * len(inst)
             for poly, poly_id, line in zip(room_polys, room_ids, is_line):
                 poly = poly[0].reshape(-1, 2).astype(np.int32)
+                ## NEW
                 pred_room_map = plot_room_map(poly, pred_room_map, poly_id, closed=not line)
 
             # Blend the overlay with the density map using alpha blending
@@ -488,6 +496,7 @@ def get_args_parser():
     parser.add_argument("--plot_gt", default=False, action="store_true", help="plot ground truth floorplan")
     parser.add_argument("--plot_gt_image", default=False, action="store_true", help="plot ground truth image")
 
+    ## NEW
     # add for stage 1 if osm
     parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
     return parser

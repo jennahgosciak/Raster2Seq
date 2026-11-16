@@ -43,7 +43,9 @@ class Raster2Seq(nn.Module):
         use_anchor=False,
         patch_size=1,
         freeze_anchor=False,
+        # not used
         inject_cls_embed=False,
+        ## NEW
         add_geom_head=False,
         label_geom=None,
     ):
@@ -168,10 +170,12 @@ class Raster2Seq(nn.Module):
 
         self.register_buffer("attention_mask", self._create_causal_attention_mask(seq_len))
 
-        # --add_geom_head: geometry head (polygon / line) + a learned bias on the label logits per geometry type
+        ## NEW
+        # --add_geom_head: geometry head (polygon / line) + a learned offset on the label logits per geometry type
         self.geom_embed = self.geom_bias = None
         if add_geom_head and semantic_classes > 0:
-            self.geom_embed = nn.Linear(hidden_dim, 2)
+            self.geom_embed = nn.Linear(hidden_dim, 2) # create hidden layer
+            # create constant offset based on geom type
             self.geom_bias = nn.Embedding(2, semantic_classes)
             nn.init.zeros_(self.geom_bias.weight)  # starts as the plain label head
 
@@ -190,8 +194,9 @@ class Raster2Seq(nn.Module):
         causal_mask = mask.masked_fill(mask == 1, float("-inf")).masked_fill(mask == 0, 0.0)
         return causal_mask
 
+    ## NEW
     def _room_logits(self, hs, target_geom=None):
-        """With --add_geom_head, the label logits get a learned bias per geometry type (true type where
+        """With --add_geom_head, the label logits get a learned offset per geometry type (true type where
         target_geom >= 0, otherwise the predicted one). With --geom_mask, generation also rules out labels of
         the other geometry type. Returns (label logits, geometry logits)."""
         # same as before
@@ -201,13 +206,16 @@ class Raster2Seq(nn.Module):
         geom_logits = self.geom_embed(hs)
         # make predictions
         geom = geom_logits.argmax(-1)
-        # use real values otherwise predictions
+        # use real values, otherwise predictions
         if target_geom is not None:
             geom = torch.where(target_geom >= 0, target_geom, geom)
-        # add the geometry bias
+        # add the geometry offset (look up whether 0 or 1 index based on geom type)
+        # just adds a constant offset term to the logits
         logits = self.room_class_embed(hs) + self.geom_bias(geom)
         # if using a geom mask
+        # target_geom is none only during inference
         if self.label_geom is not None and target_geom is None:  # generation only (see geom_mask help)
+            # masks out wrong labels
             wrong = (self.label_geom >= 0) & (self.label_geom != geom[..., None])
             # remove "wrong" class labels
             logits = logits.masked_fill(wrong, float("-inf"))
@@ -269,6 +277,7 @@ class Raster2Seq(nn.Module):
         out = {"pred_logits": outputs_class[-1], "pred_coords": outputs_coord[-1]}
 
         if self.room_class_embed is not None:
+            ## NEW
             target_geom = None if seq_kwargs is None else seq_kwargs.get("target_geom")
             out["pred_room_logits"], geom_logits = self._room_logits(hs[-1], target_geom)
             if geom_logits is not None:
@@ -590,6 +599,7 @@ class Raster2Seq(nn.Module):
         # hack implementation of room label prediction, not compatible with auxiliary loss
         if self.room_class_embed is not None:
             hs = torch.cat(output_hs_list, dim=1)
+            ## NEW
             outputs_room_class, geom_logits = self._room_logits(hs)
             out = {
                 "pred_logits": all_cls_logits,
@@ -601,6 +611,7 @@ class Raster2Seq(nn.Module):
                 "enc_data": enc_data,
                 "anchors": query_embeds.detach(),
             }
+            ## NEW
             if geom_logits is not None:
                 out["pred_geom_logits"] = geom_logits
 
@@ -723,6 +734,7 @@ class SetCriterion(nn.Module):
 
             losses = {"loss_ce": loss_ce, "loss_ce_room": loss_ce_room}
 
+        ## NEW
         if "pred_geom_logits" in outputs and "target_geom" in targets:
             geom_target = targets["target_geom"].to(src_logits.device)
             keep = geom_target >= 0
@@ -871,6 +883,7 @@ class MLP(nn.Module):
         return x
 
 
+## NEW
 def label_geometry(dataset_root, semantic_classes):
     """Each label's geometry type from the training annotations: 1 = line, 0 = polygon, -1 = either / unseen.
     All -1 if the annotations aren't there (e.g. predict.py); the checkpoint's table is then loaded instead."""
@@ -878,7 +891,9 @@ def label_geometry(dataset_root, semantic_classes):
     kinds = collections.defaultdict(set)
     if os.path.exists(path):
         for a in json.load(open(path))["annotations"]:
+            # for each category ID add if it's a line (=1) or poygon (=0)
             kinds[a["category_id"]].add(int(a.get("geom_type") == "line"))
+        # set multiple or 0 types to -1
     return [next(iter(kinds[c])) if len(kinds[c]) == 1 else -1 for c in range(semantic_classes)]
 
 
@@ -905,8 +920,12 @@ def build(args, train=True, tokenizer=None):
         use_anchor=args.use_anchor,
         patch_size=[1, 2][args.image_size == 512],  # 1 for 256x256, 2 for 512x512
         freeze_anchor=getattr(args, "freeze_anchor", False),
+        # not used (should be removed)
         inject_cls_embed=getattr(args, "inject_cls_embed", False),
+        ## NEW
         add_geom_head=getattr(args, "add_geom_head", False),
+        # if label mask is specified
+        # pass in a list of geometry types per labels
         label_geom=label_geometry(args.dataset_root, args.semantic_classes) if getattr(args, "geom_mask", False) else None,
     )
 
@@ -919,6 +938,7 @@ def build(args, train=True, tokenizer=None):
         "loss_ce": args.cls_loss_coef,
         "loss_ce_room": args.room_cls_loss_coef,
         "loss_coords": args.coords_loss_coef,
+        ## NEW
         # new loss for geom classification only
         "loss_ce_geom": getattr(args, "geom_loss_coef", 1.0),
     }

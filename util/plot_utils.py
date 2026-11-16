@@ -158,6 +158,7 @@ def plot_floorplan_with_regions(
     regions_type=None,
     plot_text=False,
     semantics_label_mapping=None,
+    ## NEW
     is_line=None,
 ):
     """Draw floorplan map where different colors indicate different rooms"""
@@ -202,6 +203,7 @@ def plot_floorplan_with_regions(
     #     ind = np.argsort(np.square(np.array(avg_corner)).sum(axis=1), axis=0)
     #     regions = [regions[_idx] for _idx in ind] # np.array(regions)[ind]
 
+    ## NEW
     # account for line
     is_line = is_line or [False] * len(regions)
     for idx, (polygon, line) in enumerate(zip(regions, is_line)):
@@ -215,6 +217,7 @@ def plot_floorplan_with_regions(
     pointColor = (0, 0, 0, 255)
     lineColor = (0, 0, 0, 255)
 
+    ## NEW
     # draw lines
     for region, line in zip(regions, is_line):
         cv2.polylines(image, [region], isClosed=not line, color=lineColor, thickness=5)
@@ -342,6 +345,7 @@ def plot_score_map(corner_map, scores):
     return score_map
 
 
+## NEW
 def plot_room_map(preds, room_map, room_id=0, im_size=256, plot_text=True, closed=True):
     """Draw room polygons overlaid on the density map (closed=False: an open line, no closing edge)"""
     centroid_x = int(np.mean(preds[:, 0]))
@@ -357,6 +361,7 @@ def plot_room_map(preds, room_map, room_id=0, im_size=256, plot_text=True, close
 
     for i, corner in enumerate(preds):
         if i == len(preds) - 1:
+            ## NEW
             if closed:  # closing edge back to the first corner (polygons only)
                 cv2.line(
                     room_map,
@@ -403,6 +408,7 @@ def plot_room_map(preds, room_map, room_id=0, im_size=256, plot_text=True, close
     return room_map
 
 
+## NEW
 def plot_density_map(sample, image_size, room_polys, pred_room_label_per_scene, plot_text=True, is_line=None):
     if not isinstance(sample, np.ndarray):
         density_map = np.transpose(sample.cpu().numpy(), [1, 2, 0])
@@ -414,6 +420,7 @@ def plot_density_map(sample, image_size, room_polys, pred_room_label_per_scene, 
         density_map = np.repeat(density_map, 3, axis=2) * (image_size - 1)
     pred_room_map = np.zeros([image_size, image_size, 3])
 
+    ## NEW
     # updated to account for lines
     for room_poly, room_id, line in zip(room_polys, pred_room_label_per_scene, is_line or [False] * len(room_polys)):
         pred_room_map = plot_room_map(room_poly, pred_room_map, room_id, im_size=image_size, plot_text=plot_text,
@@ -930,8 +937,10 @@ def plot_semantic_rich_floorplan_opencv(
 
     if scale != 1:
         new_polygons = []
+        ## NEW
         for poly, *rest in polygons:
             poly = (poly * scale).round().astype(np.int32)
+            ## NEW
             new_polygons.append([poly, *rest])
         polygons = new_polygons
 
@@ -957,15 +966,18 @@ def plot_semantic_rich_floorplan_opencv(
     room_polygons = []
     door_polygons = []
     window_polygons = []
+    ## NEW
     line_polygons = []  # open lines (entries flagged is_line)
 
     # Sort polygons by type (track original index for highlight support)
+    ## NEW
     for poly_idx, (poly, poly_type, *flags) in enumerate(polygons):
         if len(poly) < 2:  # Skip invalid polygons
             continue
 
         points = np.array(poly, dtype=np.int32)
 
+        ## NEW
         if flags and flags[0]:  # Open line: drawn as a stroke, never filled or closed
             line_polygons.append((points, poly_type, poly_idx))
         elif door_window_index and poly_type == door_window_index[0]:  # Door
@@ -1000,6 +1012,7 @@ def plot_semantic_rich_floorplan_opencv(
     # Blend overlay with transparency
     cv2.addWeighted(overlay, room_alpha, image, 1 - room_alpha, 0, image)
 
+    ## NEW
     # Draw open lines, coloured by type like rooms
     for points, poly_type, _orig_idx in line_polygons:
         if is_bw:

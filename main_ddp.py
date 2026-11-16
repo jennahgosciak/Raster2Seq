@@ -78,6 +78,7 @@ def get_args_parser():
 
     # parser.add_argument('--use_room_attn_at_last_dec_layer', default=False, action='store_true', help="use room-wise attention in last decoder layer")
 
+    ## NEW
     # handle stage 1 predictions differently
     parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
     
@@ -277,6 +278,7 @@ def main(args):
                 del item["target_polygon_labels"]
                 # del item['input_polygon_labels']
 
+            ## NEW
             # Collect target geom and add to batch
             # Remove from item, add to extras
             target_geom = [item.pop("target_geom") for item in batch if "target_geom" in item]
@@ -298,6 +300,7 @@ def main(args):
                 # 'input_polygon_labels': input_polygon_labels,
             }
 
+            ## NEW
             # Return the concatenated batch
             if target_geom:
                 extras["target_geom"] = torch.stack(target_geom)
@@ -438,6 +441,7 @@ def main(args):
         # )
         dist.barrier()
 
+    ## NEW
     if args.start_from_checkpoint and not (args.resume and os.path.exists(args.resume)):
         checkpoint = torch.load(args.start_from_checkpoint, map_location="cpu")["model"]
         for key, value in checkpoint.items():
@@ -486,6 +490,7 @@ def main(args):
                         checkpoint[key] = checkpoint[key].repeat((diff_scale, 1))
                     else:
                         checkpoint[key] = checkpoint[key].repeat((diff_scale,))
+            ## NEW
             # New: if sequence of checkpoint != initialized sequence
             elif key == "query_embed.weight" and value.shape != model.module.query_embed.weight.shape:
                 n = min(len(value), len(model.module.query_embed.weight))
@@ -593,12 +598,14 @@ def main(args):
                 args.dataset_name,
                 data_loader_val,
                 device,
+                ## NEW
                 plot_density=False, # turning off
                 output_dir=output_dir,
                 epoch=epoch,
                 poly2seq=args.poly2seq,
                 add_cls_token=args.add_cls_token,
                 per_token_sem_loss=args.per_token_sem_loss,
+                ## NEW
                 wd_as_line=not args.disable_wd_as_line and args.dataset_name != "osm"
             )
             log_stats.update(**{f"test_{k}": v for k, v in test_stats.items()})

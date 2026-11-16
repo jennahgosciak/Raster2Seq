@@ -145,6 +145,7 @@ def get_args_parser():
     parser.add_argument("--dataset_root", default="data/stru3d", type=str)
     parser.add_argument("--eval_set", default="test", type=str)
 
+    ## NEW
     # new for osm
     parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
     parser.add_argument("--row_tolerance", type=float, default=None)
@@ -163,6 +164,7 @@ def get_args_parser():
     parser.add_argument("--plot_gt", default=True, type=bool, help="plot ground truth floorplan")
     parser.add_argument("--save_pred", action="store_true", help="save_pred")
 
+    ## NEW
     # add geom head
     parser.add_argument("--add_geom_head", action="store_true",
                         help="geometry head (polygon/line) whose prediction adds a learned bias to the label logits")
@@ -317,6 +319,7 @@ def main(args):
         per_token_sem_loss=args.per_token_sem_loss,
         iou_thres=args.iou_thres,
         poly2seq=args.poly2seq,
+        ## NEW
         per_label=args.per_label_eval
     )
 
