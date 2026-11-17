@@ -524,8 +524,10 @@ def main(args):
             print("Unexpected Keys: {}".format(unexpected_keys))
         dist.barrier()
 
-    # Prepare models for training:
+    # Restore EMA weights (moving average) from checkpoint when model is pre-empted
     utils.update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
+    if args.resume and os.path.exists(args.resume):  # restore the saved EMA instead of restarting it
+        ema.load_state_dict(torch.load(args.resume, map_location="cpu")["ema"])
     ema.eval()
 
     print("Start training")
@@ -550,24 +552,23 @@ def main(args):
         if epoch > int(args.increase_cls_loss_coef_epoch_ratio * args.epochs) and args.increase_cls_loss_coef > 1.0:
             criterion._update_ce_coeff(args.increase_cls_loss_coef * args.cls_loss_coef)
 
-        if (epoch + 1) in args.lr_drop or (epoch + 1) % args.ckpt_every_epoch == 0 or (epoch + 1) == args.epochs:
-            if rank == 0:
-                checkpoint_paths = [output_dir / "checkpoint.pth"]
-                # extra checkpoint before LR drop and every 20 epochs
-                checkpoint_paths.append(output_dir / f"checkpoint{epoch:04}.pth")
-                for checkpoint_path in checkpoint_paths:
-                    torch.save(
-                        {
-                            "model": model.module.state_dict(),
-                            "ema": ema.state_dict(),
-                            "optimizer": optimizer.state_dict(),
-                            "lr_scheduler": None if lr_scheduler is None else lr_scheduler.state_dict(),
-                            "epoch": epoch,
-                            "args": args,
-                        },
-                        checkpoint_path,
-                    )
-            dist.barrier()
+        if rank == 0:
+            checkpoint_paths = [output_dir / "checkpoint.pth"]  # every epoch, overwritten (for --resume)
+            if (epoch + 1) in args.lr_drop or (epoch + 1) % args.ckpt_every_epoch == 0 or (epoch + 1) == args.epochs:
+                checkpoint_paths.append(output_dir / f"checkpoint{epoch:04}.pth")  # kept
+            for checkpoint_path in checkpoint_paths:
+                torch.save(
+                    {
+                        "model": model.module.state_dict(),
+                        "ema": ema.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "lr_scheduler": None if lr_scheduler is None else lr_scheduler.state_dict(),
+                        "epoch": epoch,
+                        "args": args,
+                    },
+                    checkpoint_path,
+                )
+        dist.barrier()
 
         log_stats = {**{f"train_{k}": v for k, v in train_stats.items()}, "epoch": epoch, "n_parameters": n_parameters}
 

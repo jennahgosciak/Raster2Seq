@@ -931,6 +931,14 @@ def evaluate_floor(
                     cv2.imwrite(os.path.join(output_dir, "{}_pred_room_map.png".format(scene_ids[i])), pred_room_map)
                     cv2.imwrite(os.path.join(output_dir, "{}_gt_room_map.png".format(scene_ids[i])), gt_room_map)
 
+    # output a dictionary of just numerators for precision/recall and image counts
+    sums = {k: [float(v), scene_counter] for k, v in quant_result_dict.items()}
+    for r in line_results + label_results:
+        for k, v in r.items():
+            sums[k] = [sums.get(k, [0, 0])[0] + v, sums.get(k, [0, 0])[1] + 1]
+    with open(os.path.join(output_dir, "sums.json") as file:
+        file.write(json.dumps(sums))
+
     for k in quant_result_dict.keys():
         quant_result_dict[k] /= float(scene_counter)
     quant_result_dict = compute_f1(quant_result_dict, metric_category)
@@ -938,7 +946,9 @@ def evaluate_floor(
     # add line results, only for labels that appear in images
     if line_results:
         # get all per-label metrics for the set of images in the sample
-        keys = {k for r in line_results for k in r}
+        # line_results is a list of all images with at least one GT line
+        # keys is the set of line metrics
+        keys = ["line_prec", "line_rec", "line_sem_prec", "line_sem_rec"]
         # compute mean for each label across all images that have it
         quant_result_dict.update({k: float(np.mean([r[k] for r in line_results if k in r])) for k in keys})
 
@@ -946,12 +956,16 @@ def evaluate_floor(
     # each label averaged over the images that contain it
     if label_results:
         names, _ = get_dataset_class_labels(dataset_name)
-        keys = sorted({k for r in label_results for k in r}, key=lambda k: (int(k.split("_")[1]), k))
-        quant_result_dict["per_label"] = {
-            f"{k.split('_')[0]}_{names[int(k.split('_')[1])]}": float(np.mean([r[k] for r in label_results if k in r]))
-            for k in keys}
-        for k, v in quant_result_dict["per_label"].items():
-            print(f"{k:<25s} {v:.3f}")
+        quant_result_dict["per_label"] = {}
+        # each label's precision / recall, averaged over the images that contain it
+        for c, name in enumerate(names):
+            for m in ("prec", "rec"):
+                # collect metric across all images wehre it apperas
+                # label_results is a list of each image's results summary
+                values = [r[f"{m}_{c}"] for r in label_results if f"{m}_{c}" in r]
+                if values:  # skip labels that never appear
+                    quant_result_dict["per_label"][f"{m}_{name}"] = float(np.mean(values))
+                    print(f"{m}_{name:<20s} {np.mean(values):.3f}")
 
     print("*************************************************")
     print(quant_result_dict)
