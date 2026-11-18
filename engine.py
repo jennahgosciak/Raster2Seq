@@ -936,7 +936,7 @@ def evaluate_floor(
     for r in line_results + label_results:
         for k, v in r.items():
             sums[k] = [sums.get(k, [0, 0])[0] + v, sums.get(k, [0, 0])[1] + 1]
-    with open(os.path.join(output_dir, "sums.json") as file:
+    with open(os.path.join(output_dir, "sums.json"), "w") as file:
         file.write(json.dumps(sums))
 
     for k in quant_result_dict.keys():
