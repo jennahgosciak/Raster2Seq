@@ -958,7 +958,7 @@ def evaluate_floor(
         names, _ = get_dataset_class_labels(dataset_name)
         quant_result_dict["per_label"] = {}
         # each label's precision / recall, averaged over the images that contain it
-        for c, name in enumerate(names):
+        for c, name in names.items():
             for m in ("prec", "rec"):
                 # collect metric across all images wehre it apperas
                 # label_results is a list of each image's results summary
