@@ -39,7 +39,7 @@ from evaluations.line_eval import line_scores, label_scores
 # ground-truth polygons below it are dropped too (lines are kept), so both sides follow the same rule.
 MIN_POLY_AREA = 100
 FILTER_GT_BY_AREA = False
-# line band half-width in original PNG px (create_coco_osm.py --line_buffer_px); scaled to the model input per image
+# line band half-width in original PNG px (eval.py --line_buffer_px); scaled to the model input per image
 LINE_BUFFER_PX = 10.8
 
 options = MCSSOptions()
