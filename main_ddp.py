@@ -527,7 +527,9 @@ def main(args):
     # Restore EMA weights (moving average) from checkpoint when model is pre-empted
     utils.update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
     if args.resume and os.path.exists(args.resume):  # restore the saved EMA instead of restarting it
-        ema.load_state_dict(torch.load(args.resume, map_location="cpu")["ema"])
+            ema_sd = torch.load(args.resume, map_location="cpu")["ema"]
+            ema.load_state_dict({k: v for k, v in ema_sd.items() if "cache" not in k})  # caches are rebuilt during generation
+
     ema.eval()
 
     print("Start training")
