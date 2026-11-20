@@ -39,6 +39,8 @@ from evaluations.line_eval import line_scores, label_scores
 # ground-truth polygons below it are dropped too (lines are kept), so both sides follow the same rule.
 MIN_POLY_AREA = 100
 FILTER_GT_BY_AREA = False
+# line band half-width in original PNG px (eval.py --line_buffer_px); scaled to the model input per image
+LINE_BUFFER_PX = 10.8
 
 options = MCSSOptions()
 opts = options.parse()
@@ -206,7 +208,8 @@ def evaluate(
     if dataset_name == "osm":
         ds = data_loader.dataset
         line_classes = {1} if getattr(ds, "geom_classes", False) else {
-            a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("geom_type") == "line"}
+            # new: include source_geom_type for buffered data
+            a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("source_geom_type", a.get("geom_type")) == "line"}
 
     for batched_inputs, batched_extras in metric_logger.log_every(data_loader, 10, header):
         samples = [x["image"].to(device) for x in batched_inputs]
@@ -582,6 +585,7 @@ def evaluate_floor(
     iou_thres=0.5,
     wd_as_line=True,
     per_label=False, # new to handle per-label metrics
+    pred_lines_buffered=False,  # the model predicts lines as bands (trained on buffered lines)
 ):
     """
     Evaluate the model on a given dataset at testing.
@@ -638,6 +642,8 @@ def evaluate_floor(
     metric_category = ["room", "corner", "angles"]
     if semantic_rich:
         metric_category += ["room_sem", "window_door"]
+    if dataset_name == "osm" and semantic_rich:
+        metric_category += ["all", "all_corner"]  # lines + polygons combined
 
     quant_result_dict = None
     scene_counter = 0
@@ -649,7 +655,10 @@ def evaluate_floor(
     # handles lines differently based on stage 1 vs. stage 2
     ds = data_loader.dataset
     line_classes = {1} if getattr(ds, "geom_classes", False) else {
-        a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("geom_type") == "line"}
+        # new: include source_geom_type for buffered data
+        a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("source_geom_type", a.get("geom_type")) == "line"}
+    # buffered datasets keep the original geometry type in source_geom_type
+    gt_lines_buffered = any("source_geom_type" in a for a in ds.coco.dataset["annotations"])
     line_results = []
     label_results = [] # --per_label_eval, initialize, will be used later
 
@@ -735,11 +744,25 @@ def evaluate_floor(
             window_doors_types = scene_outputs["window_doors_types"]
             pred_room_label_per_scene = scene_outputs["pred_room_label_per_scene"]
 
-            pred_lines = gt_lines = [] # initialize to empty for other datasets
+            # new
+            # drop predicted polygons under MIN_POLY_AREA px² (lines exempt), like roomformer and baselines
             if dataset_name == "osm" and semantic_rich:
-                # lines: buffered into thin polygons and scored on their own; the evaluator below gets polygons only
+                keep = [t in line_classes or (len(p) >= 3 and Polygon(p).area >= MIN_POLY_AREA)
+                        for p, t in zip(room_polys, room_types)]
+                room_polys = [p for p, k in zip(room_polys, keep) if k]
+                room_types = [t for t, k in zip(room_types, keep) if k]
+
+            pred_lines = gt_lines = [] # initialize to empty for other datasets
+            scores = {}
+            if dataset_name == "osm" and semantic_rich:
+                # lines: buffered into thin polygons and scored if not already buffered
+                # the evaluator below gets polygons only
+                # band half-width at the model input: the PNG is resized so its longer side is image_size
+                img = ds.coco.imgs[scene_ids[i]]
+                radius = LINE_BUFFER_PX * image_size / max(img["width"], img["height"])
                 scores = line_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
-                                     (image_size, image_size))
+                                     (image_size, image_size), radius=radius,
+                                     gt_buffered=gt_lines_buffered, pred_buffered=pred_lines_buffered)
                 if scores:
                     # adding line scores
                     line_results.append(scores)
@@ -747,7 +770,9 @@ def evaluate_floor(
                 # adding per-label scores
                 if per_label:  # per-label precision / recall, before lines are removed below
                     label_results.append(label_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
-                                                      (image_size, image_size)))
+                                                      (image_size, image_size), radius=radius,
+                                                      gt_buffered=gt_lines_buffered,
+                                                      pred_buffered=pred_lines_buffered))
 
                 # keep line predictions and gt (for plots)
                 pred_lines = [(p, t) for p, t in zip(room_polys, room_types) if t in line_classes]
@@ -791,6 +816,18 @@ def evaluate_floor(
                         gt_window_doors_type_list=gt_window_doors_types,
                         img_size=(image_size, image_size),
                     )
+
+            if dataset_name == "osm" and semantic_rich:
+                # lines + polygons: add the hit / shape / vertex counts, then divide
+                r = quant_result_dict_scene
+                n_pp, n_pg = len(room_polys), len(gt_polys)
+                pts_pp, pts_pg = sum(len(p) for p in room_polys), sum(len(p) for p in gt_polys)
+                hits = r["room_prec"] * n_pp + scores.get("line_hits", 0)
+                c_hits = r["corner_prec"] * pts_pp + scores.get("line_corner_hits", 0)
+                r["all_prec"] = hits / max(n_pp + scores.get("n_line_pred", 0), 1)
+                r["all_rec"] = hits / max(n_pg + scores.get("n_line_gt", 0), 1)
+                r["all_corner_prec"] = c_hits / max(pts_pp + scores.get("line_points_pred", 0), 1)
+                r["all_corner_rec"] = c_hits / max(pts_pg + scores.get("line_points_gt", 0), 1)
 
             if quant_result_dict is None:
                 quant_result_dict = quant_result_dict_scene
@@ -941,6 +978,7 @@ def evaluate_floor(
         keys = {k for r in line_results for k in r}
         # compute mean for each label across all images that have it
         quant_result_dict.update({k: float(np.mean([r[k] for r in line_results if k in r])) for k in keys})
+        quant_result_dict = compute_f1(quant_result_dict, ["line", "line_sem", "line_corner"])
 
     # add per-label results
     # each label averaged over the images that contain it
