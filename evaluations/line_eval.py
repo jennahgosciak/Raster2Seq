@@ -40,9 +40,9 @@ def _scoring_helper(
     pred = [(p, t) for p, t in zip(pred_polys, pred_types) if keep(t)]
     gt = [(p, t) for p, t in zip(gt_polys, gt_types) if keep(t)]
     if not gt:
-        return None
+        return None, pred, gt
     pt, gtt = [t for _, t in pred], [t for _, t in gt]
-    return Evaluator_RPlan(
+    r = Evaluator_RPlan(
         disable_overlapping_filter=True, wd_as_line=False
     ).evaluate_scene(
         # add args for already buffered (pred + ground truth)
@@ -60,6 +60,19 @@ def _scoring_helper(
         gt_polys_types=gtt,
         img_size=img_size,
     )
+    return r, pred, gt
+
+
+def line_corner_hits(pred, gt):
+    """Vertices of the true line `gt` within corner_metric_thresh px of a vertex of `pred` (each used once)."""
+    pred, used = np.asarray(pred, float), set()
+    for v in np.asarray(gt, float):
+        d = np.linalg.norm(pred - v, axis=1)
+        d[list(used)] = np.inf
+        j = int(d.argmin())
+        if d[j] <= corner_metric_thresh:
+            used.add(j)
+    return len(used)
 
 
 def line_scores(
@@ -75,8 +88,9 @@ def line_scores(
 ):
     """Line precision / recall: the lines are buffered `radius` px on each side (default: the 10 px corner
     tolerance) and matched like polygons (Evaluator_RPlan, IoU > 0.5); line_sem_* also need the right label.
+    Also returns counts (hits, shapes, vertices) so engine.py can combine lines with polygons.
     Returns {} without true lines."""
-    r = _scoring_helper(
+    r, pred, gt = _scoring_helper(
         pred_polys,
         pred_types,
         gt_polys,
@@ -90,12 +104,29 @@ def line_scores(
     )
     if r is None:
         return {}
+    pts_pred, pts_gt = sum(len(p) for p, _ in pred), sum(len(p) for p, _ in gt)
+    if pred_buffered and gt_buffered:
+        # bands: the evaluator's corner metric already compares band vertices
+        c_hits = round(r["corner_prec"] * pts_pred)
+    else:
+        # raw lines: compare the line vertices of each matched pair (pred2gt indexes the size-sorted gt)
+        c_hits = sum(line_corner_hits(pred[j][0], gt[r["gt_polys_sorted_indcs"][g]][0])
+                     for j, g in enumerate(r["pred2gt_indices"]) if g != -1)
     # duplicates metrics but for lines
     return {
         "line_prec": r["room_prec"],
         "line_rec": r["room_rec"],
         "line_sem_prec": r["room_sem_prec"],
         "line_sem_rec": r["room_sem_rec"],
+        "line_corner_prec": c_hits / max(pts_pred, 1),
+        "line_corner_rec": c_hits / max(pts_gt, 1),
+        # counts, for the combined metrics
+        "line_hits": round(r["room_prec"] * len(pred)),
+        "n_line_pred": len(pred),
+        "n_line_gt": len(gt),
+        "line_corner_hits": c_hits,
+        "line_points_pred": pts_pred,
+        "line_points_gt": pts_gt,
     }
 
 
@@ -114,7 +145,7 @@ def label_scores(
     Keys: prec_<label id>, rec_<label id>, for labels with true shapes in the image."""
     out = {}
     for c in sorted(set(gt_types)):
-        r = _scoring_helper(
+        r, _, _ = _scoring_helper(
             pred_polys,
             pred_types,
             gt_polys,
