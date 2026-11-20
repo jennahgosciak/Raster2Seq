@@ -256,6 +256,12 @@ def main(args):
         A batch collator that does nothing. Note: combines several records into one batch.
         """
         if "target_seq" in batch[0]:
+            #     embedding = E[seq11] * delta_x2 * delta_y2
+            #   + E[seq21] * delta_x1 * delta_y2
+            #   + E[seq12] * delta_x2 * delta_y1
+            #   + E[seq22] * delta_x1 * delta_y1
+            # E = self.token_embed
+
             # Concatenate tensors for each key in the batch
             delta_x1 = torch.stack([item["delta_x1"] for item in batch], dim=0)
             delta_x2 = torch.stack([item["delta_x2"] for item in batch], dim=0)
@@ -629,6 +635,11 @@ def main(args):
                 "val_metrics/angles_prec": test_stats["angles_prec"],
                 "val_metrics/angles_rec": test_stats["angles_rec"],
             }
+            for k in ["line_prec", "line_rec", "line_sem_prec", "line_sem_rec"]:  # lines (OSM), if any were scored
+                if k in test_stats:
+                    val_log_dict[f"val_metrics/{k}"] = test_stats[k]
+            if "loss_ce_geom" in test_stats:
+                val_log_dict["val/loss_ce_geom"] = test_stats["loss_ce_geom"]
 
             if args.semantic_classes > 0:
                 # need to log additional metrics for semantically-rich floorplans

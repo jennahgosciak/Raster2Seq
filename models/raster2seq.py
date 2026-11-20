@@ -178,6 +178,7 @@ class Raster2Seq(nn.Module):
 
         # --geom_mask: each label's geometry type (1 line, 0 polygon, -1 either); saved with the checkpoint
         # get geometries associated with each label if geom_mask is set
+        # not updated/weights aren't tracked
         use_mask = label_geom is not None and self.geom_embed is not None
         self.register_buffer("label_geom", torch.tensor(label_geom, dtype=torch.long) if use_mask else None)
 
@@ -198,18 +199,13 @@ class Raster2Seq(nn.Module):
         causal_mask = mask.masked_fill(mask == 1, float("-inf")).masked_fill(mask == 0, 0.0)
         return causal_mask
 
-    def _sem_attn_mask(self, valid):
-        """Blocked pairs (True) for the semantic layer: padding and tokens after <eos> are never attended to.
-        valid: (B, L) bool. Each token can always attend to itself, so no row is empty."""
-        allowed = valid[:, None, :] | torch.eye(valid.shape[1], dtype=torch.bool, device=valid.device)
-        return (~allowed).repeat_interleave(self.sem_attn.self_attn.num_heads, dim=0)
-
     def _room_logits(self, hs, target_geom=None, valid=None):
         """With --add_geom_head, the label logits get a learned bias per geometry type (true type where
         target_geom >= 0, otherwise the predicted one). With --geom_mask, generation also rules out labels of
         the other geometry type. With --sem_attn, the semantic head reads hidden states refined by a bidirectional
         attention layer over the real tokens (`valid`). Returns (label logits, geometry logits)."""
-        h_sem = hs if self.sem_attn is None else self.sem_attn(hs, src_mask=self._sem_attn_mask(valid))
+        h_sem = hs if self.sem_attn is None else self.sem_attn(hs, src_key_padding_mask=~valid)
+
         # same as before
         if self.geom_embed is None:
             return self.room_class_embed(h_sem), None
@@ -217,7 +213,7 @@ class Raster2Seq(nn.Module):
         geom_logits = self.geom_embed(hs)
         # make predictions
         geom = geom_logits.argmax(-1)
-        # use real values otherwise predictions
+        # use real values, otherwise predictions
         if target_geom is not None:
             geom = torch.where(target_geom >= 0, target_geom, geom)
         # add the geometry bias
@@ -275,6 +271,8 @@ class Raster2Seq(nn.Module):
         query_embeds = None if self.query_embed is None else self.query_embed.weight
         tgt_embeds = None
 
+        # main encoder + decoder module
+        # includes the coordinate and token heads (anchors are query_embed)
         hs, init_reference, inter_references, inter_classes = self.transformer(
             srcs, masks, pos, query_embeds, tgt_embeds, self.attention_mask, seq_kwargs
         )
@@ -490,7 +488,10 @@ class Raster2Seq(nn.Module):
                     enc_cache=enc_cache,
                     decode_token_pos=decode_token_pos,
                 )
-                output_hs_list.append(hs)
+                # output_hs: the decoder's hidden states for the new token (256 numbers), used afterwards to predict labels
+                # output_cls:  the token-type scores (cls_output): coordinate, separator or end
+                #  the coordinates (reg_output)
+                output_hs_list.append(hs) # used for semantic label head
                 output_cls_list.append(cls_output)
                 output_reg_list.append(reg_output)
             cls_probs = torch.softmax(cls_output, dim=2)
