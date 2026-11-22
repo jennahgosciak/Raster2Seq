@@ -85,6 +85,16 @@ def get_args_parser():
     parser.add_argument("--add_geom_head", action="store_true",
                         help="geometry head (polygon/line) whose prediction adds a learned bias to the label logits")
     parser.add_argument("--geom_loss_coef", default=1.0, type=float)
+    parser.add_argument("--sem_attn", action="store_true",
+                        help="bidirectional attention layer over the sequence before the semantic head")
+    parser.add_argument("--start_repeat_coef", type=float, default=0.0,
+                        help="weight of the penalty for a shape starting where an earlier shape started")
+    parser.add_argument("--start_repeat_radius", type=float, default=0.02,
+                        help="distance (fraction of the image) counted as the same start for --start_repeat_coef")
+    parser.add_argument("--start_noise_prob", type=float, default=0.0,
+                        help="training: share of shapes whose input start corner is jittered")
+    parser.add_argument("--start_noise_std", type=float, default=0.01,
+                        help="training: std of that jitter, as a fraction of the image")
     parser.add_argument("--geom_mask", action="store_true",
                         help="with --add_geom_head: during generation, labels must match the predicted geometry type")
 
@@ -246,6 +256,12 @@ def main(args):
         A batch collator that does nothing. Note: combines several records into one batch.
         """
         if "target_seq" in batch[0]:
+            #     embedding = E[seq11] * delta_x2 * delta_y2
+            #   + E[seq21] * delta_x1 * delta_y2
+            #   + E[seq12] * delta_x2 * delta_y1
+            #   + E[seq22] * delta_x1 * delta_y1
+            # E = self.token_embed
+
             # Concatenate tensors for each key in the batch
             delta_x1 = torch.stack([item["delta_x1"] for item in batch], dim=0)
             delta_x2 = torch.stack([item["delta_x2"] for item in batch], dim=0)
@@ -514,7 +530,7 @@ def main(args):
             print("Unexpected Keys: {}".format(unexpected_keys))
         dist.barrier()
 
-    # Prepare models for training:
+    # Restore EMA weights (moving average) from checkpoint when model is pre-empted
     utils.update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
     if args.resume and os.path.exists(args.resume):  # restore the saved EMA instead of restarting it
         ema_sd = torch.load(args.resume, map_location="cpu")["ema"]
@@ -544,24 +560,23 @@ def main(args):
         if epoch > int(args.increase_cls_loss_coef_epoch_ratio * args.epochs) and args.increase_cls_loss_coef > 1.0:
             criterion._update_ce_coeff(args.increase_cls_loss_coef * args.cls_loss_coef)
 
-        if (epoch + 1) in args.lr_drop or (epoch + 1) % args.ckpt_every_epoch == 0 or (epoch + 1) == args.epochs:
-            if rank == 0:
-                checkpoint_paths = [output_dir / "checkpoint.pth"]
-                # extra checkpoint before LR drop and every 20 epochs
-                checkpoint_paths.append(output_dir / f"checkpoint{epoch:04}.pth")
-                for checkpoint_path in checkpoint_paths:
-                    torch.save(
-                        {
-                            "model": model.module.state_dict(),
-                            "ema": ema.state_dict(),
-                            "optimizer": optimizer.state_dict(),
-                            "lr_scheduler": None if lr_scheduler is None else lr_scheduler.state_dict(),
-                            "epoch": epoch,
-                            "args": args,
-                        },
-                        checkpoint_path,
-                    )
-            dist.barrier()
+        if rank == 0:
+            checkpoint_paths = [output_dir / "checkpoint.pth"]  # every epoch, overwritten (for --resume)
+            if (epoch + 1) in args.lr_drop or (epoch + 1) % args.ckpt_every_epoch == 0 or (epoch + 1) == args.epochs:
+                checkpoint_paths.append(output_dir / f"checkpoint{epoch:04}.pth")  # kept
+            for checkpoint_path in checkpoint_paths:
+                torch.save(
+                    {
+                        "model": model.module.state_dict(),
+                        "ema": ema.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "lr_scheduler": None if lr_scheduler is None else lr_scheduler.state_dict(),
+                        "epoch": epoch,
+                        "args": args,
+                    },
+                    checkpoint_path,
+                )
+        dist.barrier()
 
         log_stats = {**{f"train_{k}": v for k, v in train_stats.items()}, "epoch": epoch, "n_parameters": n_parameters}
 
@@ -620,6 +635,11 @@ def main(args):
                 "val_metrics/angles_prec": test_stats["angles_prec"],
                 "val_metrics/angles_rec": test_stats["angles_rec"],
             }
+            for k in ["line_prec", "line_rec", "line_sem_prec", "line_sem_rec"]:  # lines (OSM), if any were scored
+                if k in test_stats:
+                    val_log_dict[f"val_metrics/{k}"] = test_stats[k]
+            if "loss_ce_geom" in test_stats:
+                val_log_dict["val/loss_ce_geom"] = test_stats["loss_ce_geom"]
 
             if args.semantic_classes > 0:
                 # need to log additional metrics for semantically-rich floorplans
