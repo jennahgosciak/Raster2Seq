@@ -18,7 +18,8 @@ from detectron2.data import transforms as T
 from engine import generate, generate_with_refinement, plot_density_map
 from models import build_model
 from raster2seq_hub import resolve_checkpoint_path
-from util.plot_utils import CC5K_LABEL, S3D_LABEL, auto_crop_whitespace, plot_semantic_rich_floorplan_opencv
+from util.plot_utils import (CC5K_LABEL, S3D_LABEL, auto_crop_whitespace, osm_label_colors,
+                              plot_semantic_rich_floorplan_opencv)
 
 from datasets import get_dataset_class_labels
 
@@ -336,7 +337,7 @@ def main(args):
     save_dir = os.path.join(args.output_dir, os.path.dirname(args.checkpoint).split("/")[-1])
     os.makedirs(save_dir, exist_ok=True)
 
-    semantics_label_mapping = None
+    semantics_label_mapping = label_colors = None
     if args.dataset_name == "stru3d":
         door_window_index = [16, 17]
         semantics_label_mapping = S3D_LABEL
@@ -348,6 +349,8 @@ def main(args):
     elif args.dataset_name == "osm":
         door_window_index = []
         semantics_label_mapping = {0: "polygon", 1: "line"} if args.geom_classes else get_dataset_class_labels("osm")
+        if not args.geom_classes:  # labels in map-like colors
+            label_colors = osm_label_colors(get_dataset_class_labels("osm")[0])
     else:
         door_window_index = []
 
@@ -431,6 +434,7 @@ def main(args):
                 img_w=image_size * args.image_scale,
                 img_h=image_size * args.image_scale,
                 scale=args.image_scale,
+                label_colors=label_colors,
             )
 
             image = x[j].permute(1, 2, 0).cpu().numpy() * 255

@@ -24,6 +24,7 @@ from datasets import get_dataset_class_labels
 from datasets.poly_data import TokenType
 from util.eval_utils import compute_f1
 from util.plot_utils import (
+    osm_label_colors,
     concat_floorplan_maps,
     plot_density_map,
     plot_floorplan_with_regions,
@@ -924,6 +925,7 @@ def evaluate_floor(
 
                 if semantic_rich:
                     _, ID2CLASS_LABEL = get_dataset_class_labels(dataset_name)
+                    label_colors = osm_label_colors(get_dataset_class_labels("osm")[0]) if dataset_name == "osm" else None
                     # add lines to the shapes to be predicted
                     shapes = [[p, t, False] for p, t in zip(room_polys + window_doors, room_types + window_doors_types)]
                     shapes += [[p, t, True] for p, t in pred_lines]
@@ -932,6 +934,21 @@ def evaluate_floor(
                         os.path.join(output_dir, "{}_pred_floorplan_sem.png".format(scene_ids[i])),
                         door_window_index=door_window_index,
                         semantics_label_mapping=ID2CLASS_LABEL,
+                        label_colors=label_colors,
+                        img_w=image_size,
+                        img_h=image_size,
+                        scale=1,
+                        plot_text=False,
+                    )
+                    # ground truth in the same label colors
+                    gt_shapes = [[p, t, False] for p, t in zip(gt_polys + gt_window_doors, gt_polys_types + gt_window_doors_types)]
+                    gt_shapes += [[p, t, True] for p, t in gt_lines]
+                    plot_semantic_rich_floorplan_opencv(
+                        gt_shapes,
+                        os.path.join(output_dir, "{}_gt_floorplan_sem.png".format(scene_ids[i])),
+                        door_window_index=door_window_index,
+                        semantics_label_mapping=ID2CLASS_LABEL,
+                        label_colors=label_colors,
                         img_w=image_size,
                         img_h=image_size,
                         scale=1,
