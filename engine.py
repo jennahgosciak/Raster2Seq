@@ -574,6 +574,22 @@ def _process_predictions(
 
 
 @torch.no_grad()
+def bootstrap_ci(results, metrics, n=1000, seed=0):
+    """95% bootstrap intervals, resampling images: for each metric m with per-image m_prec / m_rec in `results`,
+    returns m_prec, m_rec and m_f1 intervals (F1 from each sample's mean precision and recall)."""
+    rng = np.random.default_rng(seed)
+    out = {}
+    for m in metrics:
+        pr = np.array([(r[f"{m}_prec"], r[f"{m}_rec"]) for r in results if f"{m}_prec" in r])
+        if len(pr) == 0:
+            continue
+        means = pr[rng.integers(0, len(pr), (n, len(pr)))].mean(axis=1)  # n samples x (prec, rec)
+        f1 = 2 * means[:, 0] * means[:, 1] / (means.sum(axis=1) + 1e-5)
+        for name, v in [("prec", means[:, 0]), ("rec", means[:, 1]), ("f1", f1)]:
+            out[f"{m}_{name}"] = [float(x) for x in np.percentile(v, [2.5, 97.5])]
+    return out
+
+
 def evaluate_floor(
     model,
     dataset_name,
@@ -666,6 +682,7 @@ def evaluate_floor(
     # buffered datasets keep the original geometry type in source_geom_type
     gt_lines_buffered = any("source_geom_type" in a for a in ds.coco.dataset["annotations"])
     line_results = []
+    scene_results = []  # each image's scores, for the confidence intervals
     label_results = [] # --per_label_eval, initialize, will be used later
 
     for batched_inputs, batched_extras in data_loader:
@@ -838,6 +855,7 @@ def evaluate_floor(
                 r["all_corner_prec"] = c_hits / max(pts_pp + scores.get("line_points_pred", 0), 1)
                 r["all_corner_rec"] = c_hits / max(pts_pg + scores.get("line_points_gt", 0), 1)
 
+            scene_results.append({k: v for k, v in quant_result_dict_scene.items() if np.isscalar(v)})
             if quant_result_dict is None:
                 quant_result_dict = quant_result_dict_scene
             else:
@@ -995,7 +1013,7 @@ def evaluate_floor(
         # get all per-label metrics for the set of images in the sample
         # line_results is a list of all images with at least one GT line
         # keys is the set of line metrics
-        keys = ["line_prec", "line_rec", "line_sem_prec", "line_sem_rec"]
+        keys = ["line_prec", "line_rec", "line_sem_prec", "line_sem_rec", "line_corner_prec", "line_corner_rec"]
         # compute mean for each label across all images that have it
         quant_result_dict.update({k: float(np.mean([r[k] for r in line_results if k in r])) for k in keys})
         quant_result_dict = compute_f1(quant_result_dict, ["line", "line_sem", "line_corner"])
@@ -1014,6 +1032,12 @@ def evaluate_floor(
                 if values:  # skip labels that never appear
                     quant_result_dict["per_label"][f"{m}_{name}"] = float(np.mean(values))
                     print(f"{m}_{name:<20s} {np.mean(values):.3f}")
+
+    # 95% confidence intervals: images resampled with replacement (line metrics: images with lines)
+    quant_result_dict["ci"] = {**bootstrap_ci(scene_results, metric_category),
+                               **bootstrap_ci(line_results, ["line", "line_sem", "line_corner"])}
+    for k, (lo, hi) in quant_result_dict["ci"].items():
+        print(f"{k:<20s} {quant_result_dict.get(k, float('nan')):.3f}  [{lo:.3f}, {hi:.3f}]")
 
     print("*************************************************")
     print(quant_result_dict)
