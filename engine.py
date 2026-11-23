@@ -879,10 +879,13 @@ def evaluate_floor(
                 del quant_result_dict_scene["gt_polys_sorted_indcs"]
                 gt_room_polys = [gt_room_polys[ind] for ind in gt_polys_sorted_indcs]
 
+            # matched pairs first, for the match-colored plots only: room_polys keeps its order, which room_types
+            # (and the saved predictions) follow
+            matched_polys = room_polys
             if "pred2gt_indices" in quant_result_dict_scene:
                 pred2gt_indices = quant_result_dict_scene["pred2gt_indices"]
                 del quant_result_dict_scene["pred2gt_indices"]
-                room_polys, gt_room_polys, pred_mask, gt_mask = sort_polygons_by_matching(
+                matched_polys, gt_room_polys, pred_mask, gt_mask = sort_polygons_by_matching(
                     pred2gt_indices, room_polys, gt_room_polys
                 )
             else:
@@ -910,8 +913,8 @@ def evaluate_floor(
                     gt_room_polys + gl, matching_labels=None if gt_mask is None else gt_mask + [True] * len(gl),
                     base_scale=image_size, scale=1024, is_line=[False] * len(gt_room_polys) + [True] * len(gl))
                 floorplan_map = plot_floorplan_with_regions(
-                    room_polys + pl, matching_labels=None if pred_mask is None else pred_mask + [True] * len(pl),
-                    base_scale=image_size, scale=1024, is_line=[False] * len(room_polys) + [True] * len(pl))
+                    matched_polys + pl, matching_labels=None if pred_mask is None else pred_mask + [True] * len(pl),
+                    base_scale=image_size, scale=1024, is_line=[False] * len(matched_polys) + [True] * len(pl))
 
                 # gt_floorplan_map = plot_floorplan_with_regions(
                 #     gt_room_polys, matching_labels=gt_mask, base_scale=image_size, scale=1024
