@@ -437,7 +437,7 @@ def main(args):
                 label_colors=label_colors,
             )
 
-            image = x[j].permute(1, 2, 0).cpu().numpy() * 255
+            image = x[j].permute(1, 2, 0).cpu().numpy()[:, :, ::-1] * 255  # RGB -> BGR for cv2
             if args.crop_white_space:
                 image = cv2.resize(
                     image,

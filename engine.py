@@ -989,7 +989,7 @@ def evaluate_floor(
 
             if plot_gt:
                 gt_image = np.transpose(samples[i].cpu().numpy(), (1, 2, 0))
-                gt_image = (gt_image * 255).astype(np.uint8)
+                gt_image = np.ascontiguousarray((gt_image * 255).astype(np.uint8)[:, :, ::-1])  # RGB -> BGR for cv2
                 cv2.imwrite(os.path.join(output_dir, "{}_gt.png".format(scene_ids[i])), gt_image)
 
             if plot_density:

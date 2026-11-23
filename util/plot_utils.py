@@ -409,7 +409,7 @@ def plot_density_map(sample, image_size, room_polys, pred_room_label_per_scene, 
     else:
         density_map = sample
     if density_map.shape[2] == 3:
-        density_map = density_map * (image_size - 1)
+        density_map = density_map[:, :, ::-1] * (image_size - 1)  # RGB -> BGR for cv2
     else:
         density_map = np.repeat(density_map, 3, axis=2) * (image_size - 1)
     pred_room_map = np.zeros([image_size, image_size, 3])
