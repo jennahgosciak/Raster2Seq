@@ -212,7 +212,7 @@ def get_args_parser():
     )
     parser.add_argument("--plot_gt", default=False, type=bool, help="plot ground truth floorplan")
     parser.add_argument("--save_pred", action="store_true", help="save_pred")
-    parser.add_argument("--min_poly_area", type=float, default=100,
+    parser.add_argument("--min_poly_area", type=float, default=25,
                         help="osm: drop predicted polygons smaller than this (px^2); --line_classes are kept")
     parser.add_argument("--line_classes", type=int, nargs="*", default=[],
                         help="osm: label ids that are lines (kept by the area filter, drawn as open lines)")
