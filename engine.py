@@ -41,6 +41,9 @@ from evaluations.line_eval import line_scores, label_scores
 # ground-truth polygons below it are dropped too (lines are kept), so both sides follow the same rule.
 MIN_POLY_AREA = 100
 FILTER_GT_BY_AREA = False
+# training-time validation (evaluate) drops predicted and true polygons under this area (px^2, lines kept), like
+# eval.py --filter_gt_by_area --min_poly_area 25, so the logs match the final evaluation
+VAL_MIN_POLY_AREA = 25
 # line band half-width in original PNG px (eval.py --line_buffer_px); scaled to the model input per image
 LINE_BUFFER_PX = 10.8
 
@@ -208,11 +211,14 @@ def evaluate(
     # - Stage 1 with --geom_classes: the model predicts 0 = polygon, 1 = line, so "line" is class 1.
     # Stage 2: the model predicts 33 labels. Lines are several of those (street, path, highway)
     line_classes = set()
+    lines_buffered = False
     if dataset_name == "osm":
         ds = data_loader.dataset
         line_classes = {1} if getattr(ds, "geom_classes", False) else {
             # new: include source_geom_type for buffered data
             a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("source_geom_type", a.get("geom_type")) == "line"}
+        # same line scoring as evaluate_floor (eval.py), so training logs match the final evaluation
+        lines_buffered = any("source_geom_type" in a for a in ds.coco.dataset["annotations"])
 
     for batched_inputs, batched_extras in metric_logger.log_every(data_loader, 10, header):
         samples = [x["image"].to(device) for x in batched_inputs]
@@ -270,6 +276,11 @@ def evaluate(
                 else:
                     gt_polys.append(gt_poly)
                     gt_polys_types.append(gt_id)
+            if dataset_name == "osm":  # drop small true polygons (lines kept), as eval.py --filter_gt_by_area
+                _keep = [len(p) < 3 or t in line_classes or Polygon(p).area >= VAL_MIN_POLY_AREA
+                         for p, t in zip(gt_polys, gt_polys_types)]
+                gt_polys = [p for p, k in zip(gt_polys, _keep) if k]
+                gt_polys_types = [t for t, k in zip(gt_polys_types, _keep) if k]
 
             # Create evaluator based on dataset
             if dataset_name == "stru3d":
@@ -315,10 +326,18 @@ def evaluate(
             window_doors_types = scene_outputs["window_doors_types"]
             pred_room_label_per_scene = scene_outputs["pred_room_label_per_scene"] # used for plots, unfiltered
 
+            if dataset_name == "osm" and semantic_rich:  # drop small predicted polygons (lines kept), as eval.py
+                keep = [t in line_classes or (len(p) >= 3 and Polygon(p).area >= VAL_MIN_POLY_AREA)
+                        for p, t in zip(room_polys, room_types)]
+                room_polys = [p for p, k in zip(room_polys, keep) if k]
+                room_types = [t for t, k in zip(room_types, keep) if k]
+
             if dataset_name == "osm" and semantic_rich:
                 # lines: buffered into thin polygons and scored on their own; the evaluator below gets polygons only
+                img = ds.coco.imgs[scene_ids[i]]  # band half-width: the build-time buffer at this image's scale
+                radius = LINE_BUFFER_PX * image_size / max(img["width"], img["height"])
                 metric_logger.update(**line_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
-                                                   (image_size, image_size)))
+                                                   (image_size, image_size), radius=radius, buffered=lines_buffered))
                 keep = [t not in line_classes for t in room_types]
                 room_polys = [p for p, k in zip(room_polys, keep) if k] # keep only predictions that are NOT lines
                 room_types = [t for t, k in zip(room_types, keep) if k]
