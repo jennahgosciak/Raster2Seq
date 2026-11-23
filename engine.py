@@ -945,7 +945,8 @@ def evaluate_floor(
                 polys_list = [poly.astype(float).tolist() for poly in room_polys]
                 if semantic_rich:
                     polys_list += [window_door.astype(float).tolist() for window_door in window_doors]
-                    types_list = room_types + window_doors_types
+                    polys_list += [np.asarray(p).astype(float).tolist() for p, _ in pred_lines]  # lines, scored separately above
+                    types_list = list(room_types) + list(window_doors_types) + [t for _, t in pred_lines]
                 else:
                     types_list = [-1] * len(polys_list)
 
