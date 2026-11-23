@@ -1056,6 +1056,7 @@ def generate(
     use_cache=True,
     per_token_sem_loss=False,
     drop_wd=False,
+    wd_as_line=True,  # False for osm: keep every shape (no floor-plan window/door handling or area filter)
 ):
     """
     Generate room polygons and labels from model predictions.
@@ -1128,7 +1129,7 @@ def generate(
             pred_room_logits if semantic_rich else None,
             False,
             per_token_sem_loss,
-            wd_as_line=True,
+            wd_as_line=wd_as_line,
             door_window_index=None,
             dataset_name=None,
         )

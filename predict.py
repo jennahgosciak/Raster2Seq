@@ -7,6 +7,7 @@ import random
 import cv2
 import numpy as np
 import torch
+from shapely.geometry import Polygon
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm, trange
@@ -210,6 +211,10 @@ def get_args_parser():
     )
     parser.add_argument("--plot_gt", default=False, type=bool, help="plot ground truth floorplan")
     parser.add_argument("--save_pred", action="store_true", help="save_pred")
+    parser.add_argument("--min_poly_area", type=float, default=100,
+                        help="osm: drop predicted polygons smaller than this (px^2); --line_classes are kept")
+    parser.add_argument("--line_classes", type=int, nargs="*", default=[],
+                        help="osm: label ids that are lines (kept by the area filter, drawn as open lines)")
 
     # add for stage 1 if osm
     parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
@@ -374,7 +379,14 @@ def main(args):
                 per_token_sem_loss=args.per_token_sem_loss,
                 drop_wd=args.drop_wd,
                 poly2seq=args.poly2seq,
+                wd_as_line=args.dataset_name != "osm",
             )
+            if args.dataset_name == "osm":  # like eval.py: drop small polygons, keep lines
+                for k, (polys, labels) in enumerate(zip(outputs["room"], outputs["labels"])):
+                    keep = [t in args.line_classes or (len(p) >= 3 and Polygon(p).area >= args.min_poly_area)
+                            for p, t in zip(polys, labels)]
+                    outputs["room"][k] = [p for p, x in zip(polys, keep) if x]
+                    outputs["labels"][k] = [t for t, x in zip(labels, keep) if x]
         else:
             outputs = generate_with_refinement(
                 model,
@@ -398,16 +410,18 @@ def main(args):
             if pred_cls is None:
                 pred_cls = [-1] * len(pred_rm)
             fn = os.path.basename(filenames[j]).split(".")[0]
+            is_line = [t in args.line_classes for t in pred_cls]  # drawn open, not closed
             pred_room_map = plot_density_map(
                 x[j],
                 image_size,
                 pred_rm,
                 pred_cls,
                 plot_text=args.plot_text,
+                is_line=is_line,
             )
 
             floorplan_map = plot_semantic_rich_floorplan_opencv(
-                zip(pred_rm, pred_cls),
+                zip(pred_rm, pred_cls, is_line),
                 None,
                 door_window_index=door_window_index,
                 semantics_label_mapping=semantics_label_mapping,
