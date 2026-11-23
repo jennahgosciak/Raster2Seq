@@ -581,10 +581,12 @@ def bootstrap_ci(results, metrics, n=1000, seed=0):
     rng = np.random.default_rng(seed)
     out = {}
     for m in metrics:
-        pr = np.array([(r[f"{m}_prec"], r[f"{m}_rec"]) for r in results if f"{m}_prec" in r])
+        # allow for nan if missing
+        pr = np.array([(r.get(f"{m}_prec", np.nan), r.get(f"{m}_rec", np.nan))
+                       for r in results if f"{m}_prec" in r or f"{m}_rec" in r])
         if len(pr) == 0:
             continue
-        means = pr[rng.integers(0, len(pr), (n, len(pr)))].mean(axis=1)  # n samples x (prec, rec)
+        means = np.nanmean(pr[rng.integers(0, len(pr), (n, len(pr)))], axis=1)  # n samples x (prec, rec)
         f1 = 2 * means[:, 0] * means[:, 1] / (means.sum(axis=1) + 1e-5)
         for name, v in [("prec", means[:, 0]), ("rec", means[:, 1]), ("f1", f1)]:
             out[f"{m}_{name}"] = [float(x) for x in np.percentile(v, [2.5, 97.5])]

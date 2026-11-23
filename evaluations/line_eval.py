@@ -8,6 +8,7 @@ def buffer_lines(polys, types, line_classes, radius=2.0, already_buffered=False)
     """Lines (types in line_classes) widened `radius` px on each side into polygons (flat ends, mitred corners,
     like create_coco_osm.py --line_buffer_px); other shapes pass through unchanged."""
     if already_buffered:
+        # if already buffered, jsut return as list
         return list(polys)
     out = []
     for p, t in zip(polys, types):
@@ -40,6 +41,7 @@ def _scoring_helper(
     pred = [(p, t) for p, t in zip(pred_polys, pred_types) if keep(t)]
     gt = [(p, t) for p, t in zip(gt_polys, gt_types) if keep(t)]
     if not gt:
+        # eg, if no lines or no label, just return
         return None, pred, gt
     pt, gtt = [t for _, t in pred], [t for _, t in gt]
     r = Evaluator_RPlan(
@@ -103,7 +105,14 @@ def line_scores(
         pred_buffered=pred_buffered,
     )
     if r is None:
-        return {}
+        if not pred:
+            return {}  # no lines at all: nothing to score
+        # predicted lines but no true lines: all false positives. Precision only (recall is undefined here),
+        # plus counts, so they also count against the combined all_* metrics in engine.py
+        pts = sum(len(p) for p, _ in pred)
+        return {"line_prec": 0.0, "line_sem_prec": 0.0, "line_corner_prec": 0.0,
+                "line_hits": 0, "n_line_pred": len(pred), "n_line_gt": 0,
+                "line_corner_hits": 0, "line_points_pred": pts, "line_points_gt": 0}
     pts_pred, pts_gt = sum(len(p) for p, _ in pred), sum(len(p) for p, _ in gt)
     if pred_buffered and gt_buffered:
         # bands: the evaluator's corner metric already compares band vertices
@@ -142,9 +151,10 @@ def label_scores(
     pred_buffered=False,
 ):
     """Per-label precision / recall: Evaluator_RPlan on one label's shapes at a time (lines buffered first).
-    Keys: prec_<label id>, rec_<label id>, for labels with true shapes in the image."""
+    Keys: prec_<label id>, rec_<label id>, for labels with true shapes in the image; a label that is only
+    predicted gets prec_<label id> = 0 (all false positives) and no recall (undefined without true shapes)."""
     out = {}
-    for c in sorted(set(gt_types)):
+    for c in sorted({int(t) for t in gt_types}):
         r, _, _ = _scoring_helper(
             pred_polys,
             pred_types,
@@ -158,4 +168,6 @@ def label_scores(
             pred_buffered=pred_buffered,
         )
         out[f"prec_{c}"], out[f"rec_{c}"] = r["room_prec"], r["room_rec"]
+    for c in {int(t) for t in pred_types} - {int(t) for t in gt_types}:
+        out[f"prec_{c}"] = 0.0  # predicted, but no true shapes with this label in the image
     return out
