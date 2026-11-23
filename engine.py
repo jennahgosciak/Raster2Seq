@@ -1,4 +1,5 @@
 import copy
+import warnings
 import json
 import math
 import os
@@ -586,10 +587,13 @@ def bootstrap_ci(results, metrics, n=1000, seed=0):
                        for r in results if f"{m}_prec" in r or f"{m}_rec" in r])
         if len(pr) == 0:
             continue
-        means = np.nanmean(pr[rng.integers(0, len(pr), (n, len(pr)))], axis=1)  # n samples x (prec, rec)
+        with np.errstate(invalid="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # "mean of empty slice" for such resamples
+            means = np.nanmean(pr[rng.integers(0, len(pr), (n, len(pr)))], axis=1)  # n samples x (prec, rec)
         f1 = 2 * means[:, 0] * means[:, 1] / (means.sum(axis=1) + 1e-5)
         for name, v in [("prec", means[:, 0]), ("rec", means[:, 1]), ("f1", f1)]:
-            out[f"{m}_{name}"] = [float(x) for x in np.percentile(v, [2.5, 97.5])]
+            # nanpercentile: a resample with no images for one side (e.g. only false-positive lines) has no recall
+            out[f"{m}_{name}"] = [float(x) for x in np.nanpercentile(v, [2.5, 97.5])]
     return out
 
 
@@ -610,7 +614,6 @@ def evaluate_floor(
     iou_thres=0.5,
     wd_as_line=True,
     per_label=False, # new to handle per-label metrics
-    pred_lines_buffered=False,  # the model predicts lines as bands (trained on buffered lines)
 ):
     """
     Evaluate the model on a given dataset at testing.
@@ -682,8 +685,9 @@ def evaluate_floor(
     line_classes = {1} if getattr(ds, "geom_classes", False) else {
         # new: include source_geom_type for buffered data
         a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("source_geom_type", a.get("geom_type")) == "line"}
-    # buffered datasets keep the original geometry type in source_geom_type
-    gt_lines_buffered = any("source_geom_type" in a for a in ds.coco.dataset["annotations"])
+    # buffered datasets keep the original geometry type in source_geom_type; a model is evaluated on the kind of
+    # data it was trained on, so its predicted lines are bands exactly when the dataset's are
+    lines_buffered = any("source_geom_type" in a for a in ds.coco.dataset["annotations"])
     line_results = []
     scene_results = []  # each image's scores, for the confidence intervals
     label_results = [] # --per_label_eval, initialize, will be used later
@@ -789,7 +793,7 @@ def evaluate_floor(
                 radius = LINE_BUFFER_PX * image_size / max(img["width"], img["height"])
                 scores = line_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
                                      (image_size, image_size), radius=radius,
-                                     gt_buffered=gt_lines_buffered, pred_buffered=pred_lines_buffered)
+                                     buffered=lines_buffered)
                 if scores:
                     # adding line scores
                     line_results.append(scores)
@@ -798,8 +802,7 @@ def evaluate_floor(
                 if per_label:  # per-label precision / recall, before lines are removed below
                     label_results.append(label_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
                                                       (image_size, image_size), radius=radius,
-                                                      gt_buffered=gt_lines_buffered,
-                                                      pred_buffered=pred_lines_buffered))
+                                                      buffered=lines_buffered))
 
                 # keep line predictions and gt (for plots)
                 pred_lines = [(p, t) for p, t in zip(room_polys, room_types) if t in line_classes]
@@ -851,12 +854,12 @@ def evaluate_floor(
                 r = quant_result_dict_scene
                 n_pp, n_pg = len(room_polys), len(gt_polys)
                 pts_pp, pts_pg = sum(len(p) for p in room_polys), sum(len(p) for p in gt_polys)
-                hits = r["room_prec"] * n_pp + scores.get("line_hits", 0)
-                c_hits = r["corner_prec"] * pts_pp + scores.get("line_corner_hits", 0)
-                r["all_prec"] = hits / max(n_pp + scores.get("n_line_pred", 0), 1)
-                r["all_rec"] = hits / max(n_pg + scores.get("n_line_gt", 0), 1)
-                r["all_corner_prec"] = c_hits / max(pts_pp + scores.get("line_points_pred", 0), 1)
-                r["all_corner_rec"] = c_hits / max(pts_pg + scores.get("line_points_gt", 0), 1)
+                matches = r["room_prec"] * n_pp + scores.get("line_matches", 0)
+                c_matches = r["corner_prec"] * pts_pp + scores.get("line_corner_matches", 0)
+                r["all_prec"] = matches / max(n_pp + scores.get("n_line_pred", 0), 1)
+                r["all_rec"] = matches / max(n_pg + scores.get("n_line_gt", 0), 1)
+                r["all_corner_prec"] = c_matches / max(pts_pp + scores.get("line_points_pred", 0), 1)
+                r["all_corner_rec"] = c_matches / max(pts_pg + scores.get("line_points_gt", 0), 1)
 
             scene_results.append({k: v for k, v in quant_result_dict_scene.items() if np.isscalar(v)})
             if quant_result_dict is None:

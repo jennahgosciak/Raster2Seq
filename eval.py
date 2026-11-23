@@ -172,8 +172,6 @@ def get_args_parser():
     parser.add_argument("--geom_loss_coef", default=1.0, type=float)
     parser.add_argument("--line_buffer_px", type=float, default=10.8,
                         help="line band half-width in original PNG px (create_coco_osm.py --line_buffer_px)")
-    parser.add_argument("--pred_lines_buffered", action="store_true",
-                        help="the model predicts lines as bands (trained on buffered lines): don't buffer them again")
     parser.add_argument("--per_label_eval", action="store_true", help="also report precision / recall per label")
     parser.add_argument("--sem_attn", action="store_true",
                         help="bidirectional attention layer over the sequence before the semantic head")
@@ -338,7 +336,6 @@ def main(args):
         iou_thres=args.iou_thres,
         poly2seq=args.poly2seq,
         per_label=args.per_label_eval,
-        pred_lines_buffered=args.pred_lines_buffered,
     )
 
 
