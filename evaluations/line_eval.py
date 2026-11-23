@@ -52,6 +52,7 @@ def _scoring_helper(
         gt_polys_types=gtt,
         img_size=img_size,
     )
+    gt = [gt[i] for i in r["gt_polys_sorted_indcs"]]  # the evaluator's (size-sorted) order, so pred2gt_indices index it directly
     return r, pred, gt
 
 
@@ -108,9 +109,10 @@ def line_scores(
         # get counts (ie multiply by denom)
         c_matches = round(r["corner_prec"] * pts_pred)
     else:
-        # raw lines: compare the line vertices of each matched pair (pred2gt indexes the size-sorted gt)
-        c_matches = sum(line_corner_matches(pred[j][0], gt[r["gt_polys_sorted_indcs"][g]][0])
-                     for j, g in enumerate(r["pred2gt_indices"]) if g != -1)
+        # raw lines: pairs were matched as bands; count corners on the original line vertices of each matched pair
+        # (gt is in the evaluator's order, so pred2gt_indices index it directly)
+        c_matches = sum(line_corner_matches(pred[j][0], gt[g][0])
+                        for j, g in enumerate(r["pred2gt_indices"]) if g != -1)
     # duplicates metrics but for lines
     return {
         "line_prec": r["room_prec"],
