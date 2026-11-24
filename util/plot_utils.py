@@ -409,6 +409,7 @@ def plot_density_map(sample, image_size, room_polys, pred_room_label_per_scene, 
     else:
         density_map = sample
     if density_map.shape[2] == 3:
+        # bug fix: need to reverse colors
         density_map = density_map[:, :, ::-1] * (image_size - 1)  # RGB -> BGR for cv2
     else:
         density_map = np.repeat(density_map, 3, axis=2) * (image_size - 1)
@@ -891,8 +892,8 @@ def plot_semantic_rich_floorplan_nicely(
     plt.close()
 
 
-# OSM labels in map-like colors: the hues of Vectorizing-Raster-Maps/utils/render_carto.py, a bit stronger so they
-# survive the 60% fill blend; lines darker so they show on white (the map's white streets would vanish)
+# OSM labels in map-like colors: the hues of Vectorizing-Raster-Maps/utils/render_carto.py
+# colors are not exact but are meant to mimic the labels as if it is a real map
 OSM_LABEL_COLORS = {
     "water": "#9ccbe0", "pool": "#9ccbe0", "waterway": "#4d80b3", "wetland": "#9cc78c", "beach": "#f7e49a",
     "building": "#c9bfb5", "residential": "#d6d5d5", "commercial": "#ecc9c8", "retail": "#f7c3bc",
@@ -905,10 +906,15 @@ OSM_LABEL_COLORS = {
 
 
 def osm_label_colors(id2name):
-    """{label id: color} for plot_semantic_rich_floorplan_opencv(label_colors=...); unlisted labels are gray."""
+    """Get simulated OSM colors"""
     return {i: OSM_LABEL_COLORS.get(name, "#cccccc") for i, name in id2name.items()}
 
-
+def _type_color(t):
+    """Color for a shape of type t: the label's map color if given, else the default palette."""
+    if label_colors:
+        return label_colors.get(int(t), "#cccccc")   # labels missing from the table: gray
+    return colors[t % len(colors)]                     # old behavior: palette indexed by type
+    
 def plot_semantic_rich_floorplan_opencv(
     polygons,
     file_name,
@@ -922,7 +928,7 @@ def plot_semantic_rich_floorplan_opencv(
     scale=1,
     is_sem=True,
     highlight_indices=None,
-    label_colors=None,  # {type: hex color}, e.g. osm_label_colors(...); default: a palette indexed by type
+    label_colors=None,  # {type: hex color}
 ):
     """
     Plot semantically-rich floorplan using OpenCV with improved quality.
@@ -960,7 +966,6 @@ def plot_semantic_rich_floorplan_opencv(
         colors = list(qualitative.Set3) + list(qualitative.Dark2)
         rgb_string_to_tuple = lambda rgb_string: tuple(float(x) / 255 for x in rgb_string.strip("rgb()").split(","))
         colors = [to_hex(rgb_string_to_tuple(x)) for x in colors]
-    type_color = lambda t: label_colors.get(int(t), "#cccccc") if label_colors else colors[t % len(colors)]
 
     # Create a white background image (more conventional for floorplans)
     if is_bw:
@@ -1009,7 +1014,7 @@ def plot_semantic_rich_floorplan_opencv(
             elif not is_sem:
                 rgb_color = ImageColor.getcolor(colors[room_id % len(colors)], "RGB")
             else:
-                rgb_color = ImageColor.getcolor(type_color(poly_type), "RGB")
+                rgb_color = ImageColor.getcolor(_type_color(poly_type), "RGB")
 
             bgr_color = (rgb_color[2], rgb_color[1], rgb_color[0])
             cv2.fillPoly(overlay, [points], color=bgr_color)
@@ -1029,7 +1034,7 @@ def plot_semantic_rich_floorplan_opencv(
         if is_bw:
             line_color = (0, 0, 0)
         else:
-            rgb_color = ImageColor.getcolor(type_color(poly_type), "RGB")
+            rgb_color = ImageColor.getcolor(_type_color(poly_type), "RGB")
             line_color = (rgb_color[2], rgb_color[1], rgb_color[0])
         cv2.polylines(image, [points], isClosed=False, color=line_color, thickness=line_thickness, lineType=cv2.LINE_AA)
 

@@ -7,7 +7,6 @@ import random
 import cv2
 import numpy as np
 import torch
-from shapely.geometry import Polygon
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm, trange
@@ -15,7 +14,7 @@ from tqdm import tqdm, trange
 from datasets.discrete_tokenizer import DiscreteTokenizer
 from datasets.transforms import ResizeAndPad
 from detectron2.data import transforms as T
-from engine import generate, generate_with_refinement, plot_density_map
+from engine import OSM_MIN_POLY_AREA, generate, generate_with_refinement, keep_condition, plot_density_map
 from models import build_model
 from raster2seq_hub import resolve_checkpoint_path
 from util.plot_utils import (CC5K_LABEL, S3D_LABEL, auto_crop_whitespace, osm_label_colors,
@@ -212,7 +211,7 @@ def get_args_parser():
     )
     parser.add_argument("--plot_gt", default=False, type=bool, help="plot ground truth floorplan")
     parser.add_argument("--save_pred", action="store_true", help="save_pred")
-    parser.add_argument("--min_poly_area", type=float, default=25,
+    parser.add_argument("--min_poly_area", type=float, default=OSM_MIN_POLY_AREA,
                         help="osm: drop predicted polygons smaller than this (px^2); --line_classes are kept")
     parser.add_argument("--line_classes", type=int, nargs="*", default=[],
                         help="osm: label ids that are lines (kept by the area filter, drawn as open lines)")
@@ -386,7 +385,7 @@ def main(args):
             )
             if args.dataset_name == "osm":  # like eval.py: drop small polygons, keep lines
                 for k, (polys, labels) in enumerate(zip(outputs["room"], outputs["labels"])):
-                    keep = [t in args.line_classes or (len(p) >= 3 and Polygon(p).area >= args.min_poly_area)
+                    keep = [keep_condition(p, t, args.line_classes, args.min_poly_area)
                             for p, t in zip(polys, labels)]
                     outputs["room"][k] = [p for p, x in zip(polys, keep) if x]
                     outputs["labels"][k] = [t for t, x in zip(labels, keep) if x]

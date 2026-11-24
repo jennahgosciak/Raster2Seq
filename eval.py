@@ -148,9 +148,10 @@ def get_args_parser():
     # new for osm
     parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
     parser.add_argument("--row_tolerance", type=float, default=None)
-    parser.add_argument("--min_poly_area", type=float, default=100, help="drop predicted polygons smaller than this (px^2)")
+    parser.add_argument("--min_poly_area", type=float, default=None,
+                        help="drop predicted polygons smaller than this (px^2); default 100, osm: engine.OSM_MIN_POLY_AREA (25)")
     parser.add_argument("--filter_gt_by_area", action="store_true",
-                        help="also drop ground-truth polygons smaller than --min_poly_area (lines are kept)")
+                        help="also drop ground-truth polygons smaller than --min_poly_area (lines are kept); always on for osm")
 
     parser.add_argument("--device", default="cuda", help="device to use for training / testing")
     parser.add_argument("--num_workers", default=2, type=int)
@@ -318,8 +319,10 @@ def main(args):
     save_dir = output_dir
     os.makedirs(save_dir, exist_ok=True)
     import engine
+    if args.min_poly_area is None:
+        args.min_poly_area = engine.OSM_MIN_POLY_AREA if args.dataset_name == "osm" else 100
     engine.MIN_POLY_AREA = args.min_poly_area
-    engine.FILTER_GT_BY_AREA = args.filter_gt_by_area
+    engine.FILTER_GT_BY_AREA = args.filter_gt_by_area or args.dataset_name == "osm"  # both sides follow one rule
     engine.LINE_BUFFER_PX = args.line_buffer_px
     evaluate_floor(
         model,

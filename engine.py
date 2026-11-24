@@ -39,11 +39,17 @@ from evaluations.line_eval import line_scores, label_scores
 
 # smallest polygon (px^2) kept; predictions below it are always dropped. With FILTER_GT_BY_AREA,
 # ground-truth polygons below it are dropped too (lines are kept), so both sides follow the same rule.
+# eval.py sets both from --min_poly_area / --filter_gt_by_area (100 / off; for osm OSM_MIN_POLY_AREA / on).
 MIN_POLY_AREA = 100
 FILTER_GT_BY_AREA = False
-# training-time validation (evaluate) drops predicted and true polygons under this area (px^2, lines kept), like
-# eval.py --filter_gt_by_area --min_poly_area 25, so the logs match the final evaluation
-VAL_MIN_POLY_AREA = 25
+# the osm default, used by eval.py, predict.py and the training-time validation (evaluate), so all three agree
+OSM_MIN_POLY_AREA = 25
+
+
+def keep_condition(p, t, line_classes, min_area):
+    """Area filter for true and predicted shapes: lines are always kept; other shapes need 3+ points and at least
+    min_area px^2 (fewer points is not a polygon)."""
+    return t in line_classes or (len(p) >= 3 and Polygon(p).area >= min_area)
 # line band half-width in original PNG px (eval.py --line_buffer_px); scaled to the model input per image
 LINE_BUFFER_PX = 10.8
 
@@ -277,7 +283,7 @@ def evaluate(
                     gt_polys.append(gt_poly)
                     gt_polys_types.append(gt_id)
             if dataset_name == "osm":  # drop small true polygons (lines kept), as eval.py --filter_gt_by_area
-                _keep = [len(p) < 3 or t in line_classes or Polygon(p).area >= VAL_MIN_POLY_AREA
+                _keep = [keep_condition(p, t, line_classes, OSM_MIN_POLY_AREA)
                          for p, t in zip(gt_polys, gt_polys_types)]
                 gt_polys = [p for p, k in zip(gt_polys, _keep) if k]
                 gt_polys_types = [t for t, k in zip(gt_polys_types, _keep) if k]
@@ -327,7 +333,7 @@ def evaluate(
             pred_room_label_per_scene = scene_outputs["pred_room_label_per_scene"] # used for plots, unfiltered
 
             if dataset_name == "osm" and semantic_rich:  # drop small predicted polygons (lines kept), as eval.py
-                keep = [t in line_classes or (len(p) >= 3 and Polygon(p).area >= VAL_MIN_POLY_AREA)
+                keep = [keep_condition(p, t, line_classes, OSM_MIN_POLY_AREA)
                         for p, t in zip(room_polys, room_types)]
                 room_polys = [p for p, k in zip(room_polys, keep) if k]
                 room_types = [t for t, k in zip(room_types, keep) if k]
@@ -753,7 +759,7 @@ def evaluate_floor(
                     gt_polys.append(gt_poly)
                     gt_polys_types.append(gt_id)
             if FILTER_GT_BY_AREA:
-                _keep = [len(p) < 3 or (line_classes and t in line_classes) or Polygon(p).area >= MIN_POLY_AREA
+                _keep = [keep_condition(p, t, line_classes, MIN_POLY_AREA)
                          for p, t in zip(gt_polys, gt_polys_types)]
                 gt_polys = [p for p, k in zip(gt_polys, _keep) if k]
                 gt_polys_types = [t for t, k in zip(gt_polys_types, _keep) if k]
@@ -796,7 +802,7 @@ def evaluate_floor(
             # new
             # drop predicted polygons under MIN_POLY_AREA px² (lines exempt), like roomformer and baselines
             if dataset_name == "osm" and semantic_rich:
-                keep = [t in line_classes or (len(p) >= 3 and Polygon(p).area >= MIN_POLY_AREA)
+                keep = [keep_condition(p, t, line_classes, MIN_POLY_AREA)
                         for p, t in zip(room_polys, room_types)]
                 room_polys = [p for p, k in zip(room_polys, keep) if k]
                 room_types = [t for t, k in zip(room_types, keep) if k]
