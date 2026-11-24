@@ -1086,6 +1086,12 @@ def evaluate_floor(
                 if values:  # skip labels that never appear
                     quant_result_dict["per_label"][f"{m}_{name}"] = float(np.mean(values))
                     print(f"{m}_{name:<20s} {np.mean(values):.3f}")
+        # 95% intervals per label
+        quant_result_dict["per_label_ci"] = {}
+        for c, name in names.items():
+            rows = [{f"x_{m}": r[f"{m}_{c}"] for m in ("prec", "rec") if f"{m}_{c}" in r} for r in label_results]
+            for stat, interval in bootstrap_ci([x for x in rows if x], ["x"]).items():
+                quant_result_dict["per_label_ci"][f"{stat[2:]}_{name}"] = interval
 
     # 95% confidence intervals: images resampled with replacement (line metrics: images with lines)
     quant_result_dict["ci"] = {**bootstrap_ci(scene_results, metric_category),
