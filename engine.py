@@ -46,7 +46,7 @@ FILTER_GT_BY_AREA = False
 OSM_MIN_POLY_AREA = 25
 
 
-def keep_condition(p, t, line_classes, min_area):
+def _keep_condition(p, t, line_classes, min_area):
     """Area filter for true and predicted shapes: lines are always kept; other shapes need 3+ points and at least
     min_area px^2 (fewer points is not a polygon)."""
     return t in line_classes or (len(p) >= 3 and Polygon(p).area >= min_area)
@@ -283,7 +283,7 @@ def evaluate(
                     gt_polys.append(gt_poly)
                     gt_polys_types.append(gt_id)
             if dataset_name == "osm":  # drop small true polygons (lines kept), as eval.py --filter_gt_by_area
-                _keep = [keep_condition(p, t, line_classes, OSM_MIN_POLY_AREA)
+                _keep = [_keep_condition(p, t, line_classes, OSM_MIN_POLY_AREA)
                          for p, t in zip(gt_polys, gt_polys_types)]
                 gt_polys = [p for p, k in zip(gt_polys, _keep) if k]
                 gt_polys_types = [t for t, k in zip(gt_polys_types, _keep) if k]
@@ -333,7 +333,7 @@ def evaluate(
             pred_room_label_per_scene = scene_outputs["pred_room_label_per_scene"] # used for plots, unfiltered
 
             if dataset_name == "osm" and semantic_rich:  # drop small predicted polygons (lines kept), as eval.py
-                keep = [keep_condition(p, t, line_classes, OSM_MIN_POLY_AREA)
+                keep = [_keep_condition(p, t, line_classes, OSM_MIN_POLY_AREA)
                         for p, t in zip(room_polys, room_types)]
                 room_polys = [p for p, k in zip(room_polys, keep) if k]
                 room_types = [t for t, k in zip(room_types, keep) if k]
@@ -607,6 +607,8 @@ def bootstrap_ci(results, metrics, n=1000, seed=0):
     rng = np.random.default_rng(seed)
     out = {}
     for m in metrics:
+        # list of prec/recall metrics per image
+        # list dim = # of images
         # allow for nan if missing
         pr = np.array([(r.get(f"{m}_prec", np.nan), r.get(f"{m}_rec", np.nan))
                        for r in results if f"{m}_prec" in r or f"{m}_rec" in r])
@@ -614,6 +616,7 @@ def bootstrap_ci(results, metrics, n=1000, seed=0):
             continue
         with np.errstate(invalid="ignore"), warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)  # "mean of empty slice" for such resamples
+            # resample images, n samples x (prec, rec)
             means = np.nanmean(pr[rng.integers(0, len(pr), (n, len(pr)))], axis=1)  # n samples x (prec, rec)
         f1 = 2 * means[:, 0] * means[:, 1] / (means.sum(axis=1) + 1e-5)
         for name, v in [("prec", means[:, 0]), ("rec", means[:, 1]), ("f1", f1)]:
@@ -759,7 +762,7 @@ def evaluate_floor(
                     gt_polys.append(gt_poly)
                     gt_polys_types.append(gt_id)
             if FILTER_GT_BY_AREA:
-                _keep = [keep_condition(p, t, line_classes, MIN_POLY_AREA)
+                _keep = [_keep_condition(p, t, line_classes, MIN_POLY_AREA)
                          for p, t in zip(gt_polys, gt_polys_types)]
                 gt_polys = [p for p, k in zip(gt_polys, _keep) if k]
                 gt_polys_types = [t for t, k in zip(gt_polys_types, _keep) if k]
@@ -802,7 +805,7 @@ def evaluate_floor(
             # new
             # drop predicted polygons under MIN_POLY_AREA px² (lines exempt), like roomformer and baselines
             if dataset_name == "osm" and semantic_rich:
-                keep = [keep_condition(p, t, line_classes, MIN_POLY_AREA)
+                keep = [_keep_condition(p, t, line_classes, MIN_POLY_AREA)
                         for p, t in zip(room_polys, room_types)]
                 room_polys = [p for p, k in zip(room_polys, keep) if k]
                 room_types = [t for t, k in zip(room_types, keep) if k]
