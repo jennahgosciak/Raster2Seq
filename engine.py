@@ -722,7 +722,7 @@ def evaluate_floor(
     if dataset_name == "osm" and semantic_rich:
         metric_category += ["all", "all_corner"]  # lines + polygons combined
 
-    quant_result_dict = None
+    # quant_result_dict = None
     scene_counter = 0
     merge = False  # Only used in poly2seq mode for merged plot output
 
