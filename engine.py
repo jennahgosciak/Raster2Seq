@@ -50,6 +50,26 @@ def _keep_condition(p, t, line_classes, min_area):
     """Area filter for true and predicted shapes: lines are always kept; other shapes need 3+ points and at least
     min_area px^2 (fewer points is not a polygon)."""
     return t in line_classes or (len(p) >= 3 and Polygon(p).area >= min_area)
+
+def _osm_results_specifications(r, room_polys, gt_polys, scores, semantic_rich):
+    """Creates combined line + polygon metrics (all_*), and marks precision/recall as missing
+    where either the ground truth or predictions do not exist."""
+    if semantic_rich:  # lines + polygons: add the match / shape / vertex counts, then divide
+        n_pp, n_pg = len(room_polys), len(gt_polys)
+        pts_pp, pts_pg = sum(len(p) for p in room_polys), sum(len(p) for p in gt_polys)
+        matches = r["room_prec"] * n_pp + scores.get("line_matches", 0)
+        c_matches = r["corner_prec"] * pts_pp + scores.get("line_corner_matches", 0)
+        r["all_prec"] = matches / max(n_pp + scores.get("n_line_pred", 0), 1)
+        r["all_rec"] = matches / max(n_pg + scores.get("n_line_gt", 0), 1)
+        r["all_corner_prec"] = c_matches / max(pts_pp + scores.get("line_points_pred", 0), 1)
+        r["all_corner_rec"] = c_matches / max(pts_pg + scores.get("line_points_gt", 0), 1)
+    if not gt_polys:  # must come after all_*, which use room_prec and corner_prec
+        r["room_missing_ratio"] = np.nan
+        for m in ("room", "room_sem", "corner", "angles"):
+            r[f"{m}_rec"] = np.nan
+            if not room_polys:
+                r[f"{m}_prec"] = np.nan
+
 # line band half-width in original PNG px (eval.py --line_buffer_px); scaled to the model input per image
 LINE_BUFFER_PX = 10.8
 
@@ -385,17 +405,18 @@ def evaluate(
 
             if "room_iou" in quant_result_dict_scene:
                 metric_logger.update(room_iou=quant_result_dict_scene["room_iou"])
-
-            metric_logger.update(room_prec=quant_result_dict_scene["room_prec"])
-            metric_logger.update(room_rec=quant_result_dict_scene["room_rec"])
-            metric_logger.update(corner_prec=quant_result_dict_scene["corner_prec"])
-            metric_logger.update(corner_rec=quant_result_dict_scene["corner_rec"])
-            metric_logger.update(angles_prec=quant_result_dict_scene["angles_prec"])
-            metric_logger.update(angles_rec=quant_result_dict_scene["angles_rec"])
+            
+            r = quant_result_dict_scene
+            if gt_polys or room_polys:   # precision: undefined only with no true and no predicted polygons
+                metric_logger.update(room_prec=r["room_prec"], corner_prec=r["corner_prec"], angles_prec=r["angles_prec"])
+                if semantic_rich:
+                    metric_logger.update(room_sem_prec=r["room_sem_prec"])
+            if gt_polys:                 # recall: undefined without true polygons
+                metric_logger.update(room_rec=r["room_rec"], corner_rec=r["corner_rec"], angles_rec=r["angles_rec"])
+                if semantic_rich:
+                    metric_logger.update(room_sem_rec=r["room_sem_rec"])
 
             if semantic_rich:
-                metric_logger.update(room_sem_prec=quant_result_dict_scene["room_sem_prec"])
-                metric_logger.update(room_sem_rec=quant_result_dict_scene["room_sem_rec"])
                 metric_logger.update(window_door_prec=quant_result_dict_scene["window_door_prec"])
                 metric_logger.update(window_door_rec=quant_result_dict_scene["window_door_rec"])
 
@@ -745,7 +766,7 @@ def evaluate_floor(
             prob = torch.nn.functional.softmax(pred_room_logits, -1)
             _, pred_room_label = prob[..., :-1].max(-1)
 
-        # process per scene
+        # process per scene/image in batch
         for i in range(bs):
             # Prepare ground truth data
             gt_polys, gt_polys_types = [], []
@@ -753,7 +774,8 @@ def evaluate_floor(
             gt_window_doors_types = []
             for gt_poly, gt_id in zip(
                 gt_instances[i].gt_masks.polygons, gt_instances[i].gt_classes.detach().cpu().tolist()
-            ):
+            ):  
+                # get ground truth
                 gt_poly = gt_poly[0].reshape(-1, 2).astype(np.int32)
                 if gt_id in door_window_index:
                     gt_window_doors.append(gt_poly)
@@ -877,24 +899,17 @@ def evaluate_floor(
                         img_size=(image_size, image_size),
                     )
 
-            if dataset_name == "osm" and semantic_rich:
-                # lines + polygons: add the hit / shape / vertex counts, then divide
-                r = quant_result_dict_scene
-                n_pp, n_pg = len(room_polys), len(gt_polys)
-                pts_pp, pts_pg = sum(len(p) for p in room_polys), sum(len(p) for p in gt_polys)
-                matches = r["room_prec"] * n_pp + scores.get("line_matches", 0)
-                c_matches = r["corner_prec"] * pts_pp + scores.get("line_corner_matches", 0)
-                r["all_prec"] = matches / max(n_pp + scores.get("n_line_pred", 0), 1)
-                r["all_rec"] = matches / max(n_pg + scores.get("n_line_gt", 0), 1)
-                r["all_corner_prec"] = c_matches / max(pts_pp + scores.get("line_points_pred", 0), 1)
-                r["all_corner_rec"] = c_matches / max(pts_pg + scores.get("line_points_gt", 0), 1)
+            if dataset_name == "osm":
+                _osm_results_specifications(quant_result_dict_scene, room_polys, gt_polys, scores, semantic_rich)
 
+            # list of per-image results
             scene_results.append({k: v for k, v in quant_result_dict_scene.items() if np.isscalar(v)})
-            if quant_result_dict is None:
-                quant_result_dict = quant_result_dict_scene
-            else:
-                for k in quant_result_dict.keys():
-                    quant_result_dict[k] += quant_result_dict_scene[k]
+            # NOT needed (to be removed)
+            # if quant_result_dict is None:
+            #     quant_result_dict = quant_result_dict_scene
+            # else:
+            #     for k in quant_result_dict.keys():
+            #         quant_result_dict[k] += quant_result_dict_scene[k]
 
             scene_counter += 1
 
@@ -904,7 +919,7 @@ def evaluate_floor(
 
             if "gt_polys_sorted_indcs" in quant_result_dict_scene:
                 gt_polys_sorted_indcs = quant_result_dict_scene["gt_polys_sorted_indcs"]
-                del quant_result_dict_scene["gt_polys_sorted_indcs"]
+                del quant_result_dict_scene["gt_polys_sorted_indcs"] # not a score that can be averaged
                 gt_room_polys = [gt_room_polys[ind] for ind in gt_polys_sorted_indcs]
 
             # matched pairs first, for the match-colored plots only: room_polys keeps its order, which room_types
@@ -1051,15 +1066,21 @@ def evaluate_floor(
                     cv2.imwrite(os.path.join(output_dir, "{}_gt_room_map.png".format(scene_ids[i])), gt_room_map)
 
     # output a dictionary of just numerators for precision/recall and image counts
-    sums = {k: [float(v), scene_counter] for k, v in quant_result_dict.items()}
+    sums = {}
+    for k in scene_results[0]:
+        v = np.array([r[k] for r in scene_results], dtype=float)
+        sums[k] = [float(np.nansum(v)), int((~np.isnan(v)).sum())]
+
     for r in line_results + label_results:
         for k, v in r.items():
             sums[k] = [sums.get(k, [0, 0])[0] + v, sums.get(k, [0, 0])[1] + 1]
     with open(os.path.join(output_dir, "sums.json"), "w") as file:
         file.write(json.dumps(sums))
 
-    for k in quant_result_dict.keys():
-        quant_result_dict[k] /= float(scene_counter)
+    # averaging over only images that have non-missing denominator for metric
+    # scene_results[0] -> just to get the right keys
+    keys = scene_results[0].keys()
+    quant_result_dict = {k: float(np.nanmean([r[k] for r in scene_results])) for k in keys}
     quant_result_dict = compute_f1(quant_result_dict, metric_category)
 
     # add line results, only for labels that appear in images

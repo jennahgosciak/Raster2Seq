@@ -14,7 +14,7 @@ from tqdm import tqdm, trange
 from datasets.discrete_tokenizer import DiscreteTokenizer
 from datasets.transforms import ResizeAndPad
 from detectron2.data import transforms as T
-from engine import OSM_MIN_POLY_AREA, generate, generate_with_refinement, keep_condition, plot_density_map
+from engine import OSM_MIN_POLY_AREA, generate, generate_with_refinement, _keep_condition, plot_density_map
 from models import build_model
 from raster2seq_hub import resolve_checkpoint_path
 from util.plot_utils import (CC5K_LABEL, S3D_LABEL, auto_crop_whitespace, osm_label_colors,
@@ -385,7 +385,7 @@ def main(args):
             )
             if args.dataset_name == "osm":  # like eval.py: drop small polygons, keep lines
                 for k, (polys, labels) in enumerate(zip(outputs["room"], outputs["labels"])):
-                    keep = [keep_condition(p, t, args.line_classes, args.min_poly_area)
+                    keep = [_keep_condition(p, t, args.line_classes, args.min_poly_area)
                             for p, t in zip(polys, labels)]
                     outputs["room"][k] = [p for p, x in zip(polys, keep) if x]
                     outputs["labels"][k] = [t for t, x in zip(labels, keep) if x]
