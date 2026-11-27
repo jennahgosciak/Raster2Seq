@@ -14,10 +14,11 @@ from tqdm import tqdm, trange
 from datasets.discrete_tokenizer import DiscreteTokenizer
 from datasets.transforms import ResizeAndPad
 from detectron2.data import transforms as T
-from engine import generate, generate_with_refinement, plot_density_map
+from engine import OSM_MIN_POLY_AREA, generate, generate_with_refinement, _keep_condition, plot_density_map
 from models import build_model
 from raster2seq_hub import resolve_checkpoint_path
-from util.plot_utils import CC5K_LABEL, S3D_LABEL, auto_crop_whitespace, plot_semantic_rich_floorplan_opencv
+from util.plot_utils import (CC5K_LABEL, S3D_LABEL, auto_crop_whitespace, osm_label_colors,
+                              plot_semantic_rich_floorplan_opencv)
 
 from datasets import get_dataset_class_labels
 
@@ -210,6 +211,10 @@ def get_args_parser():
     )
     parser.add_argument("--plot_gt", default=False, type=bool, help="plot ground truth floorplan")
     parser.add_argument("--save_pred", action="store_true", help="save_pred")
+    parser.add_argument("--min_poly_area", type=float, default=OSM_MIN_POLY_AREA,
+                        help="osm: drop predicted polygons smaller than this (px^2); --line_classes are kept")
+    parser.add_argument("--line_classes", type=int, nargs="*", default=[],
+                        help="osm: label ids that are lines (kept by the area filter, drawn as open lines)")
 
     # add for stage 1 if osm
     parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
@@ -331,7 +336,7 @@ def main(args):
     save_dir = os.path.join(args.output_dir, os.path.dirname(args.checkpoint).split("/")[-1])
     os.makedirs(save_dir, exist_ok=True)
 
-    semantics_label_mapping = None
+    semantics_label_mapping = label_colors = None
     if args.dataset_name == "stru3d":
         door_window_index = [16, 17]
         semantics_label_mapping = S3D_LABEL
@@ -343,6 +348,8 @@ def main(args):
     elif args.dataset_name == "osm":
         door_window_index = []
         semantics_label_mapping = {0: "polygon", 1: "line"} if args.geom_classes else get_dataset_class_labels("osm")
+        if not args.geom_classes:  # labels in map-like colors
+            label_colors = osm_label_colors(get_dataset_class_labels("osm")[0])
     else:
         door_window_index = []
 
@@ -374,7 +381,14 @@ def main(args):
                 per_token_sem_loss=args.per_token_sem_loss,
                 drop_wd=args.drop_wd,
                 poly2seq=args.poly2seq,
+                wd_as_line=args.dataset_name != "osm",
             )
+            if args.dataset_name == "osm":  # like eval.py: drop small polygons, keep lines
+                for k, (polys, labels) in enumerate(zip(outputs["room"], outputs["labels"])):
+                    keep = [_keep_condition(p, t, args.line_classes, args.min_poly_area)
+                            for p, t in zip(polys, labels)]
+                    outputs["room"][k] = [p for p, x in zip(polys, keep) if x]
+                    outputs["labels"][k] = [t for t, x in zip(labels, keep) if x]
         else:
             outputs = generate_with_refinement(
                 model,
@@ -398,16 +412,18 @@ def main(args):
             if pred_cls is None:
                 pred_cls = [-1] * len(pred_rm)
             fn = os.path.basename(filenames[j]).split(".")[0]
+            is_line = [t in args.line_classes for t in pred_cls]  # drawn open, not closed
             pred_room_map = plot_density_map(
                 x[j],
                 image_size,
                 pred_rm,
                 pred_cls,
                 plot_text=args.plot_text,
+                is_line=is_line,
             )
 
             floorplan_map = plot_semantic_rich_floorplan_opencv(
-                zip(pred_rm, pred_cls),
+                zip(pred_rm, pred_cls, is_line),
                 None,
                 door_window_index=door_window_index,
                 semantics_label_mapping=semantics_label_mapping,
@@ -417,9 +433,10 @@ def main(args):
                 img_w=image_size * args.image_scale,
                 img_h=image_size * args.image_scale,
                 scale=args.image_scale,
+                label_colors=label_colors,
             )
 
-            image = x[j].permute(1, 2, 0).cpu().numpy() * 255
+            image = x[j].permute(1, 2, 0).cpu().numpy()[:, :, ::-1] * 255  # RGB -> BGR for cv2
             if args.crop_white_space:
                 image = cv2.resize(
                     image,

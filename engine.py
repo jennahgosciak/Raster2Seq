@@ -1,4 +1,5 @@
 import copy
+import warnings
 import json
 import math
 import os
@@ -24,6 +25,7 @@ from datasets import get_dataset_class_labels
 from datasets.poly_data import TokenType
 from util.eval_utils import compute_f1
 from util.plot_utils import (
+    osm_label_colors,
     concat_floorplan_maps,
     plot_density_map,
     plot_floorplan_with_regions,
@@ -37,8 +39,39 @@ from evaluations.line_eval import line_scores, label_scores
 
 # smallest polygon (px^2) kept; predictions below it are always dropped. With FILTER_GT_BY_AREA,
 # ground-truth polygons below it are dropped too (lines are kept), so both sides follow the same rule.
+# eval.py sets both from --min_poly_area / --filter_gt_by_area (100 / off; for osm OSM_MIN_POLY_AREA / on).
 MIN_POLY_AREA = 100
 FILTER_GT_BY_AREA = False
+# the osm default, used by eval.py, predict.py and the training-time validation (evaluate), so all three agree
+OSM_MIN_POLY_AREA = 25
+
+
+def _keep_condition(p, t, line_classes, min_area):
+    """Area filter for true and predicted shapes: lines are always kept; other shapes need 3+ points and at least
+    min_area px^2 (fewer points is not a polygon)."""
+    return t in line_classes or (len(p) >= 3 and Polygon(p).area >= min_area)
+
+def _osm_results_specifications(r, room_polys, gt_polys, scores, semantic_rich):
+    """Creates combined line + polygon metrics (all_*), and marks precision/recall as missing
+    where either the ground truth or predictions do not exist."""
+    if semantic_rich:  # lines + polygons: add the match / shape / vertex counts, then divide
+        n_pp, n_pg = len(room_polys), len(gt_polys)
+        pts_pp, pts_pg = sum(len(p) for p in room_polys), sum(len(p) for p in gt_polys)
+        matches = r["room_prec"] * n_pp + scores.get("line_matches", 0)
+        c_matches = r["corner_prec"] * pts_pp + scores.get("line_corner_matches", 0)
+        r["all_prec"] = matches / max(n_pp + scores.get("n_line_pred", 0), 1)
+        r["all_rec"] = matches / max(n_pg + scores.get("n_line_gt", 0), 1)
+        r["all_corner_prec"] = c_matches / max(pts_pp + scores.get("line_points_pred", 0), 1)
+        r["all_corner_rec"] = c_matches / max(pts_pg + scores.get("line_points_gt", 0), 1)
+    if not gt_polys:  # must come after all_*, which use room_prec and corner_prec
+        r["room_missing_ratio"] = np.nan
+        for m in ("room", "room_sem", "corner", "angles"):
+            r[f"{m}_rec"] = np.nan
+            if not room_polys:
+                r[f"{m}_prec"] = np.nan
+
+# line band half-width in original PNG px (eval.py --line_buffer_px); scaled to the model input per image
+LINE_BUFFER_PX = 10.8
 
 options = MCSSOptions()
 opts = options.parse()
@@ -204,10 +237,14 @@ def evaluate(
     # - Stage 1 with --geom_classes: the model predicts 0 = polygon, 1 = line, so "line" is class 1.
     # Stage 2: the model predicts 33 labels. Lines are several of those (street, path, highway)
     line_classes = set()
+    lines_buffered = False
     if dataset_name == "osm":
         ds = data_loader.dataset
         line_classes = {1} if getattr(ds, "geom_classes", False) else {
-            a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("geom_type") == "line"}
+            # new: include source_geom_type for buffered data
+            a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("source_geom_type", a.get("geom_type")) == "line"}
+        # same line scoring as evaluate_floor (eval.py), so training logs match the final evaluation
+        lines_buffered = any("source_geom_type" in a for a in ds.coco.dataset["annotations"])
 
     for batched_inputs, batched_extras in metric_logger.log_every(data_loader, 10, header):
         samples = [x["image"].to(device) for x in batched_inputs]
@@ -265,6 +302,11 @@ def evaluate(
                 else:
                     gt_polys.append(gt_poly)
                     gt_polys_types.append(gt_id)
+            if dataset_name == "osm":  # drop small true polygons (lines kept), as eval.py --filter_gt_by_area
+                _keep = [_keep_condition(p, t, line_classes, OSM_MIN_POLY_AREA)
+                         for p, t in zip(gt_polys, gt_polys_types)]
+                gt_polys = [p for p, k in zip(gt_polys, _keep) if k]
+                gt_polys_types = [t for t, k in zip(gt_polys_types, _keep) if k]
 
             # Create evaluator based on dataset
             if dataset_name == "stru3d":
@@ -310,10 +352,18 @@ def evaluate(
             window_doors_types = scene_outputs["window_doors_types"]
             pred_room_label_per_scene = scene_outputs["pred_room_label_per_scene"] # used for plots, unfiltered
 
+            if dataset_name == "osm" and semantic_rich:  # drop small predicted polygons (lines kept), as eval.py
+                keep = [_keep_condition(p, t, line_classes, OSM_MIN_POLY_AREA)
+                        for p, t in zip(room_polys, room_types)]
+                room_polys = [p for p, k in zip(room_polys, keep) if k]
+                room_types = [t for t, k in zip(room_types, keep) if k]
+
             if dataset_name == "osm" and semantic_rich:
                 # lines: buffered into thin polygons and scored on their own; the evaluator below gets polygons only
+                img = ds.coco.imgs[scene_ids[i]]  # band half-width: the build-time buffer at this image's scale
+                radius = LINE_BUFFER_PX * image_size / max(img["width"], img["height"])
                 metric_logger.update(**line_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
-                                                   (image_size, image_size)))
+                                                   (image_size, image_size), radius=radius, buffered=lines_buffered))
                 keep = [t not in line_classes for t in room_types]
                 room_polys = [p for p, k in zip(room_polys, keep) if k] # keep only predictions that are NOT lines
                 room_types = [t for t, k in zip(room_types, keep) if k]
@@ -355,17 +405,18 @@ def evaluate(
 
             if "room_iou" in quant_result_dict_scene:
                 metric_logger.update(room_iou=quant_result_dict_scene["room_iou"])
-
-            metric_logger.update(room_prec=quant_result_dict_scene["room_prec"])
-            metric_logger.update(room_rec=quant_result_dict_scene["room_rec"])
-            metric_logger.update(corner_prec=quant_result_dict_scene["corner_prec"])
-            metric_logger.update(corner_rec=quant_result_dict_scene["corner_rec"])
-            metric_logger.update(angles_prec=quant_result_dict_scene["angles_prec"])
-            metric_logger.update(angles_rec=quant_result_dict_scene["angles_rec"])
+            
+            r = quant_result_dict_scene
+            if gt_polys or room_polys:   # precision: undefined only with no true and no predicted polygons
+                metric_logger.update(room_prec=r["room_prec"], corner_prec=r["corner_prec"], angles_prec=r["angles_prec"])
+                if semantic_rich:
+                    metric_logger.update(room_sem_prec=r["room_sem_prec"])
+            if gt_polys:                 # recall: undefined without true polygons
+                metric_logger.update(room_rec=r["room_rec"], corner_rec=r["corner_rec"], angles_rec=r["angles_rec"])
+                if semantic_rich:
+                    metric_logger.update(room_sem_rec=r["room_sem_rec"])
 
             if semantic_rich:
-                metric_logger.update(room_sem_prec=quant_result_dict_scene["room_sem_prec"])
-                metric_logger.update(room_sem_rec=quant_result_dict_scene["room_sem_rec"])
                 metric_logger.update(window_door_prec=quant_result_dict_scene["window_door_prec"])
                 metric_logger.update(window_door_rec=quant_result_dict_scene["window_door_rec"])
 
@@ -571,6 +622,30 @@ def _process_predictions(
 
 
 @torch.no_grad()
+def bootstrap_ci(results, metrics, n=1000, seed=0):
+    """95% bootstrap intervals, resampling images: for each metric m with per-image m_prec / m_rec in `results`,
+    returns m_prec, m_rec and m_f1 intervals (F1 from each sample's mean precision and recall)."""
+    rng = np.random.default_rng(seed)
+    out = {}
+    for m in metrics:
+        # list of prec/recall metrics per image
+        # list dim = # of images
+        # allow for nan if missing
+        pr = np.array([(r.get(f"{m}_prec", np.nan), r.get(f"{m}_rec", np.nan))
+                       for r in results if f"{m}_prec" in r or f"{m}_rec" in r])
+        if len(pr) == 0:
+            continue
+        with np.errstate(invalid="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # "mean of empty slice" for such resamples
+            # resample images, n samples x (prec, rec)
+            means = np.nanmean(pr[rng.integers(0, len(pr), (n, len(pr)))], axis=1)  # n samples x (prec, rec)
+        f1 = 2 * means[:, 0] * means[:, 1] / (means.sum(axis=1) + 1e-5)
+        for name, v in [("prec", means[:, 0]), ("rec", means[:, 1]), ("f1", f1)]:
+            # nanpercentile: a resample with no images for one side (e.g. only false-positive lines) has no recall
+            out[f"{m}_{name}"] = [float(x) for x in np.nanpercentile(v, [2.5, 97.5])]
+    return out
+
+
 def evaluate_floor(
     model,
     dataset_name,
@@ -644,8 +719,10 @@ def evaluate_floor(
     metric_category = ["room", "corner", "angles"]
     if semantic_rich:
         metric_category += ["room_sem", "window_door"]
+    if dataset_name == "osm" and semantic_rich:
+        metric_category += ["all", "all_corner"]  # lines + polygons combined
 
-    quant_result_dict = None
+    # quant_result_dict = None
     scene_counter = 0
     merge = False  # Only used in poly2seq mode for merged plot output
 
@@ -655,8 +732,13 @@ def evaluate_floor(
     # handles lines differently based on stage 1 vs. stage 2
     ds = data_loader.dataset
     line_classes = {1} if getattr(ds, "geom_classes", False) else {
-        a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("geom_type") == "line"}
+        # new: include source_geom_type for buffered data
+        a["category_id"] for a in ds.coco.dataset["annotations"] if a.get("source_geom_type", a.get("geom_type")) == "line"}
+    # buffered datasets keep the original geometry type in source_geom_type; a model is evaluated on the kind of
+    # data it was trained on, so its predicted lines are bands exactly when the dataset's are
+    lines_buffered = any("source_geom_type" in a for a in ds.coco.dataset["annotations"])
     line_results = []
+    scene_results = []  # each image's scores, for the confidence intervals
     label_results = [] # --per_label_eval, initialize, will be used later
 
     for batched_inputs, batched_extras in data_loader:
@@ -684,7 +766,7 @@ def evaluate_floor(
             prob = torch.nn.functional.softmax(pred_room_logits, -1)
             _, pred_room_label = prob[..., :-1].max(-1)
 
-        # process per scene
+        # process per scene/image in batch
         for i in range(bs):
             # Prepare ground truth data
             gt_polys, gt_polys_types = [], []
@@ -692,7 +774,8 @@ def evaluate_floor(
             gt_window_doors_types = []
             for gt_poly, gt_id in zip(
                 gt_instances[i].gt_masks.polygons, gt_instances[i].gt_classes.detach().cpu().tolist()
-            ):
+            ):  
+                # get ground truth
                 gt_poly = gt_poly[0].reshape(-1, 2).astype(np.int32)
                 if gt_id in door_window_index:
                     gt_window_doors.append(gt_poly)
@@ -701,7 +784,7 @@ def evaluate_floor(
                     gt_polys.append(gt_poly)
                     gt_polys_types.append(gt_id)
             if FILTER_GT_BY_AREA:
-                _keep = [len(p) < 3 or (line_classes and t in line_classes) or Polygon(p).area >= MIN_POLY_AREA
+                _keep = [_keep_condition(p, t, line_classes, MIN_POLY_AREA)
                          for p, t in zip(gt_polys, gt_polys_types)]
                 gt_polys = [p for p, k in zip(gt_polys, _keep) if k]
                 gt_polys_types = [t for t, k in zip(gt_polys_types, _keep) if k]
@@ -744,17 +827,23 @@ def evaluate_floor(
             # new
             # drop predicted polygons under MIN_POLY_AREA px² (lines exempt), like roomformer and baselines
             if dataset_name == "osm" and semantic_rich:
-                keep = [t in line_classes or (len(p) >= 3 and Polygon(p).area >= MIN_POLY_AREA)
+                keep = [_keep_condition(p, t, line_classes, MIN_POLY_AREA)
                         for p, t in zip(room_polys, room_types)]
                 room_polys = [p for p, k in zip(room_polys, keep) if k]
                 room_types = [t for t, k in zip(room_types, keep) if k]
 
             pred_lines, gt_lines = [], [] # initialize to empty for other datasets
+            scores = {}
             if dataset_name == "osm" and semantic_rich:
                 # TODO: put into helper function?
-                # lines: buffered into thin polygons and scored on their own; the evaluator below gets polygons only
+                # lines: buffered into thin polygons and scored if not already buffered
+                # the evaluator below gets polygons only
+                # band half-width at the model input: the PNG is resized so its longer side is image_size
+                img = ds.coco.imgs[scene_ids[i]]
+                radius = LINE_BUFFER_PX * image_size / max(img["width"], img["height"])
                 scores = line_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
-                                     (image_size, image_size))
+                                     (image_size, image_size), radius=radius,
+                                     buffered=lines_buffered)
                 if scores:
                     # adding line scores
                     line_results.append(scores)
@@ -762,7 +851,8 @@ def evaluate_floor(
                 # adding per-label scores
                 if per_label:  # per-label precision / recall, before lines are removed below
                     label_results.append(label_scores(room_polys, room_types, gt_polys, gt_polys_types, line_classes,
-                                                      (image_size, image_size)))
+                                                      (image_size, image_size), radius=radius,
+                                                      buffered=lines_buffered))
 
                 # keep line predictions and gt (for plots)
                 pred_lines = [(p, t) for p, t in zip(room_polys, room_types) if t in line_classes]
@@ -809,11 +899,17 @@ def evaluate_floor(
                         img_size=(image_size, image_size),
                     )
 
-            if quant_result_dict is None:
-                quant_result_dict = quant_result_dict_scene
-            else:
-                for k in quant_result_dict.keys():
-                    quant_result_dict[k] += quant_result_dict_scene[k]
+            if dataset_name == "osm":
+                _osm_results_specifications(quant_result_dict_scene, room_polys, gt_polys, scores, semantic_rich)
+
+            # list of per-image results
+            scene_results.append({k: v for k, v in quant_result_dict_scene.items() if np.isscalar(v)})
+            # NOT needed (to be removed)
+            # if quant_result_dict is None:
+            #     quant_result_dict = quant_result_dict_scene
+            # else:
+            #     for k in quant_result_dict.keys():
+            #         quant_result_dict[k] += quant_result_dict_scene[k]
 
             scene_counter += 1
 
@@ -823,13 +919,16 @@ def evaluate_floor(
 
             if "gt_polys_sorted_indcs" in quant_result_dict_scene:
                 gt_polys_sorted_indcs = quant_result_dict_scene["gt_polys_sorted_indcs"]
-                del quant_result_dict_scene["gt_polys_sorted_indcs"]
+                del quant_result_dict_scene["gt_polys_sorted_indcs"] # not a score that can be averaged
                 gt_room_polys = [gt_room_polys[ind] for ind in gt_polys_sorted_indcs]
 
+            # matched pairs first, for the match-colored plots only: room_polys keeps its order, which room_types
+            # (and the saved predictions) follow
+            matched_polys = room_polys
             if "pred2gt_indices" in quant_result_dict_scene:
                 pred2gt_indices = quant_result_dict_scene["pred2gt_indices"]
                 del quant_result_dict_scene["pred2gt_indices"]
-                room_polys, gt_room_polys, pred_mask, gt_mask = sort_polygons_by_matching(
+                matched_polys, gt_room_polys, pred_mask, gt_mask = sort_polygons_by_matching(
                     pred2gt_indices, room_polys, gt_room_polys
                 )
             else:
@@ -857,8 +956,8 @@ def evaluate_floor(
                     gt_room_polys + gl, matching_labels=None if gt_mask is None else gt_mask + [True] * len(gl),
                     base_scale=image_size, scale=1024, is_line=[False] * len(gt_room_polys) + [True] * len(gl))
                 floorplan_map = plot_floorplan_with_regions(
-                    room_polys + pl, matching_labels=None if pred_mask is None else pred_mask + [True] * len(pl),
-                    base_scale=image_size, scale=1024, is_line=[False] * len(room_polys) + [True] * len(pl))
+                    matched_polys + pl, matching_labels=None if pred_mask is None else pred_mask + [True] * len(pl),
+                    base_scale=image_size, scale=1024, is_line=[False] * len(matched_polys) + [True] * len(pl))
 
                 # gt_floorplan_map = plot_floorplan_with_regions(
                 #     gt_room_polys, matching_labels=gt_mask, base_scale=image_size, scale=1024
@@ -877,6 +976,7 @@ def evaluate_floor(
 
                 if semantic_rich:
                     _, ID2CLASS_LABEL = get_dataset_class_labels(dataset_name)
+                    label_colors = osm_label_colors(get_dataset_class_labels("osm")[0]) if dataset_name == "osm" else None
                     # add lines to the shapes to be predicted
                     shapes = [[p, t, False] for p, t in zip(room_polys + window_doors, room_types + window_doors_types)]
                     shapes += [[p, t, True] for p, t in pred_lines]
@@ -885,6 +985,21 @@ def evaluate_floor(
                         os.path.join(output_dir, "{}_pred_floorplan_sem.png".format(scene_ids[i])),
                         door_window_index=door_window_index,
                         semantics_label_mapping=ID2CLASS_LABEL,
+                        label_colors=label_colors,
+                        img_w=image_size,
+                        img_h=image_size,
+                        scale=1,
+                        plot_text=False,
+                    )
+                    # ground truth in the same label colors
+                    gt_shapes = [[p, t, False] for p, t in zip(gt_polys + gt_window_doors, gt_polys_types + gt_window_doors_types)]
+                    gt_shapes += [[p, t, True] for p, t in gt_lines]
+                    plot_semantic_rich_floorplan_opencv(
+                        gt_shapes,
+                        os.path.join(output_dir, "{}_gt_floorplan_sem.png".format(scene_ids[i])),
+                        door_window_index=door_window_index,
+                        semantics_label_mapping=ID2CLASS_LABEL,
+                        label_colors=label_colors,
                         img_w=image_size,
                         img_h=image_size,
                         scale=1,
@@ -898,7 +1013,8 @@ def evaluate_floor(
                 polys_list = [poly.astype(float).tolist() for poly in room_polys]
                 if semantic_rich:
                     polys_list += [window_door.astype(float).tolist() for window_door in window_doors]
-                    types_list = room_types + window_doors_types
+                    polys_list += [np.asarray(p).astype(float).tolist() for p, _ in pred_lines]  # lines, scored separately above
+                    types_list = list(room_types) + list(window_doors_types) + [t for _, t in pred_lines]
                 else:
                     types_list = [-1] * len(polys_list)
 
@@ -924,7 +1040,7 @@ def evaluate_floor(
 
             if plot_gt:
                 gt_image = np.transpose(samples[i].cpu().numpy(), (1, 2, 0))
-                gt_image = (gt_image * 255).astype(np.uint8)
+                gt_image = np.ascontiguousarray((gt_image * 255).astype(np.uint8)[:, :, ::-1])  # RGB -> BGR for cv2
                 cv2.imwrite(os.path.join(output_dir, "{}_gt.png".format(scene_ids[i])), gt_image)
 
             if plot_density:
@@ -950,15 +1066,21 @@ def evaluate_floor(
                     cv2.imwrite(os.path.join(output_dir, "{}_gt_room_map.png".format(scene_ids[i])), gt_room_map)
 
     # output a dictionary of just numerators for precision/recall and image counts
-    sums = {k: [float(v), scene_counter] for k, v in quant_result_dict.items()}
+    sums = {}
+    for k in scene_results[0]:
+        v = np.array([r[k] for r in scene_results], dtype=float)
+        sums[k] = [float(np.nansum(v)), int((~np.isnan(v)).sum())]
+
     for r in line_results + label_results:
         for k, v in r.items():
             sums[k] = [sums.get(k, [0, 0])[0] + v, sums.get(k, [0, 0])[1] + 1]
     with open(os.path.join(output_dir, "sums.json"), "w") as file:
         file.write(json.dumps(sums))
 
-    for k in quant_result_dict.keys():
-        quant_result_dict[k] /= float(scene_counter)
+    # averaging over only images that have non-missing denominator for metric
+    # scene_results[0] -> just to get the right keys
+    keys = scene_results[0].keys()
+    quant_result_dict = {k: float(np.nanmean([r[k] for r in scene_results])) for k in keys}
     quant_result_dict = compute_f1(quant_result_dict, metric_category)
 
     # add line results, only for labels that appear in images
@@ -966,9 +1088,10 @@ def evaluate_floor(
         # get all per-label metrics for the set of images in the sample
         # line_results is a list of all images with at least one GT line
         # keys is the set of line metrics
-        keys = ["line_prec", "line_rec", "line_sem_prec", "line_sem_rec"]
+        keys = ["line_prec", "line_rec", "line_sem_prec", "line_sem_rec", "line_corner_prec", "line_corner_rec"]
         # compute mean for each label across all images that have it
         quant_result_dict.update({k: float(np.mean([r[k] for r in line_results if k in r])) for k in keys})
+        quant_result_dict = compute_f1(quant_result_dict, ["line", "line_sem", "line_corner"])
 
     # add per-label results
     # each label averaged over the images that contain it
@@ -984,6 +1107,18 @@ def evaluate_floor(
                 if values:  # skip labels that never appear
                     quant_result_dict["per_label"][f"{m}_{name}"] = float(np.mean(values))
                     print(f"{m}_{name:<20s} {np.mean(values):.3f}")
+        # 95% intervals per label
+        quant_result_dict["per_label_ci"] = {}
+        for c, name in names.items():
+            rows = [{f"x_{m}": r[f"{m}_{c}"] for m in ("prec", "rec") if f"{m}_{c}" in r} for r in label_results]
+            for stat, interval in bootstrap_ci([x for x in rows if x], ["x"]).items():
+                quant_result_dict["per_label_ci"][f"{stat[2:]}_{name}"] = interval
+
+    # 95% confidence intervals: images resampled with replacement (line metrics: images with lines)
+    quant_result_dict["ci"] = {**bootstrap_ci(scene_results, metric_category),
+                               **bootstrap_ci(line_results, ["line", "line_sem", "line_corner"])}
+    for k, (lo, hi) in quant_result_dict["ci"].items():
+        print(f"{k:<20s} {quant_result_dict.get(k, float('nan')):.3f}  [{lo:.3f}, {hi:.3f}]")
 
     print("*************************************************")
     print(quant_result_dict)
@@ -1001,6 +1136,7 @@ def generate(
     use_cache=True,
     per_token_sem_loss=False,
     drop_wd=False,
+    wd_as_line=True,  # False for osm: keep every shape (no floor-plan window/door handling or area filter)
 ):
     """
     Generate room polygons and labels from model predictions.
@@ -1073,7 +1209,7 @@ def generate(
             pred_room_logits if semantic_rich else None,
             False,
             per_token_sem_loss,
-            wd_as_line=True,
+            wd_as_line=wd_as_line,
             door_window_index=None,
             dataset_name=None,
         )

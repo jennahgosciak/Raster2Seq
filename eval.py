@@ -148,9 +148,10 @@ def get_args_parser():
     # new for osm
     parser.add_argument("--geom_classes", action="store_true", help="classes = geometry type (0 polygon, 1 line)")
     parser.add_argument("--row_tolerance", type=float, default=None)
-    parser.add_argument("--min_poly_area", type=float, default=100, help="drop predicted polygons smaller than this (px^2)")
+    parser.add_argument("--min_poly_area", type=float, default=None,
+                        help="drop predicted polygons smaller than this (px^2); default 100, osm: engine.OSM_MIN_POLY_AREA (25)")
     parser.add_argument("--filter_gt_by_area", action="store_true",
-                        help="also drop ground-truth polygons smaller than --min_poly_area (lines are kept)")
+                        help="also drop ground-truth polygons smaller than --min_poly_area (lines are kept); always on for osm")
 
     parser.add_argument("--device", default="cuda", help="device to use for training / testing")
     parser.add_argument("--num_workers", default=2, type=int)
@@ -170,6 +171,8 @@ def get_args_parser():
     parser.add_argument("--add_geom_head", action="store_true",
                         help="geometry head (polygon/line) whose prediction adds a learned bias to the label logits")
     parser.add_argument("--geom_loss_coef", default=1.0, type=float)
+    parser.add_argument("--line_buffer_px", type=float, default=10.8,
+                        help="line band half-width in original PNG px (create_coco_osm.py --line_buffer_px)")
     parser.add_argument("--per_label_eval", action="store_true", help="also report precision / recall per label")
     parser.add_argument("--sem_attn", action="store_true",
                         help="bidirectional attention layer over the sequence before the semantic head")
@@ -316,8 +319,11 @@ def main(args):
     save_dir = output_dir
     os.makedirs(save_dir, exist_ok=True)
     import engine
+    if args.min_poly_area is None:
+        args.min_poly_area = engine.OSM_MIN_POLY_AREA if args.dataset_name == "osm" else 100
     engine.MIN_POLY_AREA = args.min_poly_area
-    engine.FILTER_GT_BY_AREA = args.filter_gt_by_area
+    engine.FILTER_GT_BY_AREA = args.filter_gt_by_area or args.dataset_name == "osm"  # both sides follow one rule
+    engine.LINE_BUFFER_PX = args.line_buffer_px
     evaluate_floor(
         model,
         args.dataset_name,
@@ -332,7 +338,7 @@ def main(args):
         per_token_sem_loss=args.per_token_sem_loss,
         iou_thres=args.iou_thres,
         poly2seq=args.poly2seq,
-        per_label=args.per_label_eval
+        per_label=args.per_label_eval,
     )
 
 

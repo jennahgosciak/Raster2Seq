@@ -409,7 +409,8 @@ def plot_density_map(sample, image_size, room_polys, pred_room_label_per_scene, 
     else:
         density_map = sample
     if density_map.shape[2] == 3:
-        density_map = density_map * (image_size - 1)
+        # bug fix: need to reverse colors
+        density_map = density_map[:, :, ::-1] * (image_size - 1)  # RGB -> BGR for cv2
     else:
         density_map = np.repeat(density_map, 3, axis=2) * (image_size - 1)
     pred_room_map = np.zeros([image_size, image_size, 3])
@@ -891,6 +892,29 @@ def plot_semantic_rich_floorplan_nicely(
     plt.close()
 
 
+# OSM labels in map-like colors: the hues of Vectorizing-Raster-Maps/utils/render_carto.py
+# colors are not exact but are meant to mimic the labels as if it is a real map
+OSM_LABEL_COLORS = {
+    "water": "#9ccbe0", "pool": "#9ccbe0", "waterway": "#4d80b3", "wetland": "#9cc78c", "beach": "#f7e49a",
+    "building": "#c9bfb5", "residential": "#d6d5d5", "commercial": "#ecc9c8", "retail": "#f7c3bc",
+    "industrial": "#e0c9dc", "rail_yard": "#e0c9dc", "hospital": "#f5efb0", "library": "#f5efb0",
+    "educational": "#f5efb0", "plaza": "#cfcfe0", "park": "#b5f0ba", "recreation": "#c9f5cf",
+    "grass": "#bfe3a0", "garden": "#bfe3a0", "woods": "#9cc78c", "cemetery": "#9cc0a3", "sports_field": "#97d8bf",
+    "highway": "#f19a7c", "street": "#999999", "path": "#fa8072", "railway": "#707070",
+    "unknown": "#cccccc", "unknown_line": "#bbbbbb",
+}
+
+
+def osm_label_colors(id2name):
+    """Get simulated OSM colors"""
+    return {i: OSM_LABEL_COLORS.get(name, "#cccccc") for i, name in id2name.items()}
+
+def _type_color(t):
+    """Color for a shape of type t: the label's map color if given, else the default palette."""
+    if label_colors:
+        return label_colors.get(int(t), "#cccccc")   # labels missing from the table: gray
+    return colors[t % len(colors)]                     # old behavior: palette indexed by type
+    
 def plot_semantic_rich_floorplan_opencv(
     polygons,
     file_name,
@@ -904,6 +928,7 @@ def plot_semantic_rich_floorplan_opencv(
     scale=1,
     is_sem=True,
     highlight_indices=None,
+    label_colors=None,  # {type: hex color}
 ):
     """
     Plot semantically-rich floorplan using OpenCV with improved quality.
@@ -975,6 +1000,10 @@ def plot_semantic_rich_floorplan_opencv(
         else:  # Room
             room_polygons.append((points, poly_type, poly_idx))
 
+    if label_colors:  # like the map: large areas first, so buildings etc. inside them stay on top
+        room_polygons.sort(key=lambda r: -cv2.contourArea(r[0]))
+    outline = (128, 128, 128) if label_colors else (0, 0, 0)
+
     # Draw rooms first (bottom layer)
     for room_id, (points, poly_type, orig_idx) in enumerate(room_polygons):
         # Fill room with color
@@ -985,7 +1014,7 @@ def plot_semantic_rich_floorplan_opencv(
             elif not is_sem:
                 rgb_color = ImageColor.getcolor(colors[room_id % len(colors)], "RGB")
             else:
-                rgb_color = ImageColor.getcolor(colors[poly_type % len(colors)], "RGB")
+                rgb_color = ImageColor.getcolor(_type_color(poly_type), "RGB")
 
             bgr_color = (rgb_color[2], rgb_color[1], rgb_color[0])
             cv2.fillPoly(overlay, [points], color=bgr_color)
@@ -995,7 +1024,7 @@ def plot_semantic_rich_floorplan_opencv(
 
         # Draw room outline
         line_type = cv2.LINE_AA
-        cv2.polylines(image, [points], isClosed=True, color=(0, 0, 0), thickness=line_thickness, lineType=line_type)
+        cv2.polylines(image, [points], isClosed=True, color=outline, thickness=line_thickness, lineType=line_type)
 
     # Blend overlay with transparency
     cv2.addWeighted(overlay, room_alpha, image, 1 - room_alpha, 0, image)
@@ -1005,7 +1034,7 @@ def plot_semantic_rich_floorplan_opencv(
         if is_bw:
             line_color = (0, 0, 0)
         else:
-            rgb_color = ImageColor.getcolor(colors[poly_type % len(colors)], "RGB")
+            rgb_color = ImageColor.getcolor(_type_color(poly_type), "RGB")
             line_color = (rgb_color[2], rgb_color[1], rgb_color[0])
         cv2.polylines(image, [points], isClosed=False, color=line_color, thickness=line_thickness, lineType=cv2.LINE_AA)
 
