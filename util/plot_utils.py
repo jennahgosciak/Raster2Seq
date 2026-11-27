@@ -909,7 +909,7 @@ def osm_label_colors(id2name):
     """Get simulated OSM colors"""
     return {i: OSM_LABEL_COLORS.get(name, "#cccccc") for i, name in id2name.items()}
 
-def _type_color(t):
+def _type_color(t, label_colors, colors):
     """Color for a shape of type t: the label's map color if given, else the default palette."""
     if label_colors:
         return label_colors.get(int(t), "#cccccc")   # labels missing from the table: gray
@@ -1014,7 +1014,7 @@ def plot_semantic_rich_floorplan_opencv(
             elif not is_sem:
                 rgb_color = ImageColor.getcolor(colors[room_id % len(colors)], "RGB")
             else:
-                rgb_color = ImageColor.getcolor(_type_color(poly_type), "RGB")
+                rgb_color = ImageColor.getcolor(_type_color(poly_type, label_colors, colors), "RGB")
 
             bgr_color = (rgb_color[2], rgb_color[1], rgb_color[0])
             cv2.fillPoly(overlay, [points], color=bgr_color)
@@ -1034,7 +1034,7 @@ def plot_semantic_rich_floorplan_opencv(
         if is_bw:
             line_color = (0, 0, 0)
         else:
-            rgb_color = ImageColor.getcolor(_type_color(poly_type), "RGB")
+            rgb_color = ImageColor.getcolor(_type_color(poly_type, label_colors, colors), "RGB")
             line_color = (rgb_color[2], rgb_color[1], rgb_color[0])
         cv2.polylines(image, [points], isClosed=False, color=line_color, thickness=line_thickness, lineType=cv2.LINE_AA)
 
